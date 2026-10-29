@@ -26,4 +26,10 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
             docker compose -f docker-compose.prod.yml up -d --build
+            for i in $(seq 1 20); do
+              if curl -fsS http://localhost:4000/health >/dev/null; then echo "backend healthy"; break; fi
+              if [ "$i" = 20 ]; then echo "backend failed health check"; docker compose -f docker-compose.prod.yml logs --tail 50 backend; exit 1; fi
+              sleep 3
+            done
             docker image prune -f
+            docker builder prune -f --filter until=72h
