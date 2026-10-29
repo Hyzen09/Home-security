@@ -185,13 +185,11 @@ backend, over a real MQTT broker, to real device-simulator processes:
 
 ## Deploying to EC2
 
-`docker-compose.prod.yml` runs `backend` + `mosquitto` as containers (`backend/Dockerfile`
-builds the API image; the sqlite file lives in the named `backend-data` volume so it survives
-rebuilds). `.github/workflows/deploy.yml` redeploys over SSH on every push to `main`.
+The backend runs on AWS EC2 with Docker Compose and auto-deploys on every push to `main`.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the server details, CI/CD, operations, backups, and troubleshooting.
 
-**One-time instance setup:**
+**One-time setup for a fresh instance:**
 ```bash
-# Ubuntu 22.04 instance, security group open on 22 (your IP only), 4000, 1883
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker $USER && newgrp docker
 
@@ -204,11 +202,3 @@ cd /opt/home-security
 docker compose -f docker-compose.prod.yml up -d --build
 curl http://localhost:4000/health
 ```
-
-**GitHub repo secrets** (Settings → Secrets and variables → Actions) for the deploy workflow:
-`EC2_HOST` (instance public/Elastic IP), `EC2_USER` (e.g. `ubuntu`), `EC2_SSH_KEY` (the
-private key matching a key already authorized on the instance, i.e. in `~/.ssh/authorized_keys`).
-
-No domain/TLS yet by design — see "TLS on MQTT..." above. The backend and MQTT broker are
-reachable over plain HTTP/TCP at the instance's IP; devices and the app are configured with
-that IP directly.
