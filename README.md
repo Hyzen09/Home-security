@@ -186,7 +186,7 @@ backend, over a real MQTT broker, to real device-simulator processes:
 ## Deploying to EC2
 
 The backend runs on AWS EC2 with Docker Compose and auto-deploys on every push to `main`.
-See [DEPLOYMENT.md](DEPLOYMENT.md) for the server details, CI/CD, operations, backups, and troubleshooting.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the server details, CI/CD, operations, and troubleshooting.
 
 **One-time setup for a fresh instance:**
 ```bash
