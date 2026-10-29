@@ -14,6 +14,25 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - name: Check secrets (values stay hidden)
+        env:
+          H: ${{ secrets.EC2_HOST }}
+          U: ${{ secrets.EC2_USER }}
+          K: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          echo "EC2_HOST length=${#H}"
+          [[ "$H" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && echo "EC2_HOST looks like a clean IPv4" || echo "EC2_HOST is NOT a clean IPv4 (empty, spaces, or http:// prefix?)"
+          echo "EC2_USER length=${#U}"
+          [ "$U" = "ubuntu" ] && echo "EC2_USER = ubuntu" || echo "EC2_USER is NOT exactly 'ubuntu'"
+          echo "EC2_SSH_KEY length=${#K} lines=$(printf '%s\n' "$K" | wc -l)"
+          printf '%s\n' "$K" | head -1 | grep -q -- '-----BEGIN' && echo "key first line is a BEGIN header" || echo "key first line is NOT a BEGIN header"
+          printf '%s\n' "$K" | grep -q -- '-----END' && echo "key has an END footer" || echo "key has NO END footer"
+          printf '%s' "$K" | grep -q $'\r' && echo "key contains Windows CR characters" || echo "key has no CR characters"
+          printf '%s\n' "$K" > /tmp/k && chmod 600 /tmp/k
+          ssh-keygen -y -f /tmp/k >/dev/null 2>&1 && echo "key PARSES OK with ssh-keygen" || echo "key does NOT parse with ssh-keygen"
+          rm -f /tmp/k
+          timeout 5 bash -c "</dev/tcp/$H/22" 2>/dev/null && echo "port 22 reachable from runner" || echo "port 22 NOT reachable from runner"
+
       - name: SSH and redeploy
         uses: appleboy/ssh-action@v1.0.3
         with:
