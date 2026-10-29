@@ -1,0 +1,30 @@
+import { Router } from "express";
+import crypto from "crypto";
+import db from "../db.js";
+
+const router = Router();
+const MANUFACTURING_KEY = process.env.MANUFACTURING_KEY || "dev-manufacturing-key";
+
+// Stands in for what the .exe provisioning tool calls after flashing a unit.
+// Separate auth (a manufacturing API key, not a user token) because this
+// endpoint is only ever meant to be reachable from the factory network.
+router.use((req, res, next) => {
+  if (req.headers["x-manufacturing-key"] !== MANUFACTURING_KEY) {
+    return res.status(403).json({ error: "invalid manufacturing key" });
+  }
+  next();
+});
+
+router.post("/register-device", (req, res) => {
+  const { firmware_version } = req.body || {};
+  const device_id = "dev-" + crypto.randomBytes(4).toString("hex");
+  const device_secret = crypto.randomBytes(32).toString("hex");
+
+  db.prepare(
+    "INSERT INTO devices (device_id, device_secret, status, firmware_version) VALUES (?, ?, 'unclaimed', ?)"
+  ).run(device_id, device_secret, firmware_version || "0.1.0-prototype");
+
+  res.json({ device_id, device_secret });
+});
+
+export default router;

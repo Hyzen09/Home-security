@@ -1,0 +1,34 @@
+node_modules/
+*.log
+
+backend/data.sqlite*
+backend/.env
+
+firmware/.pio/
+firmware/.pio-venv/
+firmware/include/secrets.h
+
+firmware-esp8266-bench/.pio/
+firmware-esp8266-bench/include/secrets.h
+
+app/build/
+app/.dart_tool/
+
+tools/qr-*.png
+
+.playwright-mcp/
+
+# This git repo tracks only the server-side components (backend + MQTT
+# broker config) of the larger prototype. The client-side pieces below
+# live in this working directory for local development but are not part
+# of this repo.
+/app/
+/firmware/
+/firmware-esp8266-bench/
+/tools/
+/simulator/
+/Documentation.html
+/flow.svg
+/system_architecture.md
+/system_architecture.svg
+/.claude/

@@ -1,0 +1,16 @@
+{
+  "name": "security-prototype-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.1",
+    "mqtt": "^5.10.1",
+    "ws": "^8.18.0"
+  }
+}
