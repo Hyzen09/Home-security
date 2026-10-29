@@ -1,5 +1,8 @@
 # IoT Home Security — Prototype
 
+**Android app:** [download the latest APK](https://github.com/Hyzen09/Home-security/releases/latest/download/home-security.apk)
+(all versions on the [Releases](https://github.com/Hyzen09/Home-security/releases) page).
+
 > **Repo scope:** this repository tracks only the **server-side components** —
 > `backend/`, `mosquitto/`, `docker-compose.yml` — of the larger prototype
 > described below. The Flutter app and ESP32/ESP8266 firmware are developed

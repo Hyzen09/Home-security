@@ -142,6 +142,23 @@ line from `authorized_keys`. Never paste a private key into chat, issues, or log
 - No HTTPS on the API.
 - Single instance, no database backups, SQLite (fine for a prototype, not for scale).
 
+## Android app download (GitHub Releases)
+
+The app source (`app/`) isn't in this repo, but its APK is published as a release asset.
+Permanent link to the newest version (works as long as the asset is named `home-security.apk`):
+`https://github.com/Hyzen09/Home-security/releases/latest/download/home-security.apk`
+
+Publish a new version from the maintainer's Mac (bump `version:` in `app/pubspec.yaml` first):
+```bash
+cd app && flutter build apk --release
+cp build/app/outputs/flutter-apk/app-release.apk /tmp/home-security.apk
+gh release create app-vX.Y.Z /tmp/home-security.apk --repo Hyzen09/Home-security --target main \
+  --title "Home Security app vX.Y.Z (Android)" --notes "What changed"
+```
+The APK is signed with this Mac's debug keystore (`~/.android/debug.keystore`). Phones only accept
+an update signed with the same key, so build releases on this Mac, or set up a real release key
+before distributing widely. The backend address is compiled in from `app/lib/config.dart`.
+
 ## Local development
 
 `docker-compose.yml` (no `.prod`) runs only Mosquitto for local dev; run the backend with
