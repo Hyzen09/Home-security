@@ -4,6 +4,7 @@
 export function toPublicDevice(row) {
   return {
     device_id: row.device_id,
+    name: row.name || row.device_id,
     status: row.status,
     firmware_version: row.firmware_version,
     last_seen: row.last_seen,

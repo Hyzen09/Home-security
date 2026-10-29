@@ -17,14 +17,22 @@ router.use((req, res, next) => {
 
 router.post("/register-device", (req, res) => {
   const { firmware_version } = req.body || {};
-  const device_id = "dev-" + crypto.randomBytes(4).toString("hex");
   const device_secret = crypto.randomBytes(32).toString("hex");
+  const exists = db.prepare("SELECT 1 FROM devices WHERE device_id = ?");
+
+  // device_id is the primary key; regenerate on the (rare) collision instead
+  // of failing the flash. Keep it short: the unit's hotspot SSID is
+  // "SECURE-<device_id>" and SSIDs max out at 32 bytes.
+  let device_id;
+  do {
+    device_id = "dev-" + crypto.randomBytes(4).toString("hex");
+  } while (exists.get(device_id));
 
   db.prepare(
     "INSERT INTO devices (device_id, device_secret, status, firmware_version) VALUES (?, ?, 'unclaimed', ?)"
   ).run(device_id, device_secret, firmware_version || "0.1.0-prototype");
 
-  res.json({ device_id, device_secret });
+  res.status(201).json({ device_id, device_secret });
 });
 
 export default router;

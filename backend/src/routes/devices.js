@@ -24,6 +24,21 @@ router.get("/:id", (req, res) => {
   res.json(toPublicDevice(device));
 });
 
+router.patch("/:id", (req, res) => {
+  const device = ownedDeviceOr404(req, res);
+  if (!device) return;
+  const name = String(req.body?.name ?? "").trim();
+  if (!name || name.length > 40) return res.status(400).json({ error: "Name must be 1–40 characters" });
+
+  const clash = db
+    .prepare("SELECT 1 FROM devices WHERE owner_user_id = ? AND device_id != ? AND lower(name) = lower(?)")
+    .get(req.user.id, device.device_id, name);
+  if (clash) return res.status(409).json({ error: `You already have a device named "${name}"` });
+
+  db.prepare("UPDATE devices SET name = ? WHERE device_id = ?").run(name, device.device_id);
+  res.json(toPublicDevice(db.prepare("SELECT * FROM devices WHERE device_id = ?").get(device.device_id)));
+});
+
 router.get("/:id/events", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;
@@ -67,7 +82,9 @@ router.patch("/:id/alert-mode", (req, res) => {
 router.delete("/:id", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;
-  db.prepare("UPDATE devices SET status = 'unclaimed', owner_user_id = NULL WHERE device_id = ?").run(device.device_id);
+  db.prepare("UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL WHERE device_id = ?").run(
+    device.device_id
+  );
   res.json({ ok: true });
 });
 

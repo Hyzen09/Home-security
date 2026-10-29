@@ -1,7 +1,7 @@
 import db from "./db.js";
 
 // PROTOTYPE AUTH: the bearer token is literally the user id, issued by
-// POST /auth/register (no OTP any more — see routes/auth.js). No signing,
+// POST /auth/register and /auth/login (see routes/auth.js). No signing,
 // no expiry. Replace with a signed JWT (or session token + refresh) before
 // this touches a real network.
 export function requireAuth(req, res, next) {

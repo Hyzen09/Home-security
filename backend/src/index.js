@@ -7,6 +7,7 @@ import { initWs } from "./ws.js";
 import { requireAuth } from "./auth-middleware.js";
 
 import authRoutes from "./routes/auth.js";
+import meRoutes from "./routes/me.js";
 import deviceRoutes from "./routes/devices.js";
 import manufacturingRoutes from "./routes/manufacturing.js";
 import provisioningRoutes from "./routes/provisioning.js";
@@ -18,6 +19,7 @@ app.use(express.json());
 app.get("/health", (req, res) => res.json({ ok: true }));
 
 app.use("/auth", authRoutes);
+app.use("/me", requireAuth, meRoutes);
 app.use("/devices", requireAuth, deviceRoutes);
 app.use("/manufacturing", manufacturingRoutes);
 // Not user-authed: the device itself calls this with its own device_secret
