@@ -32,7 +32,7 @@ No domain, no TLS, no reverse proxy — a deliberate choice for the prototype st
    - `docker compose -f docker-compose.prod.yml up -d --build`
    - polls `http://localhost:4000/health` for up to 60s; **the run fails and prints backend logs if it never becomes healthy**
    - prunes old images and build cache older than 72h
-3. Changes elsewhere (e.g. `scripts/`, docs) don't auto-deploy; they reach the server on the next deploy.
+3. Changes elsewhere (e.g. docs) don't auto-deploy; they reach the server on the next deploy.
    To deploy manually: GitHub → Actions → Deploy to EC2 → Run workflow, or
    `gh workflow run deploy.yml --repo Hyzen09/Home-security`.
 
@@ -97,26 +97,9 @@ A new env var must also be added to `backend/.env.example` in git so the next pe
 Roll back a bad deploy: `git revert <bad-sha> && git push` from your machine — the pipeline redeploys
 the previous state. Avoid `git reset` on the server; the next deploy undoes it.
 
-## Backups
-
-`scripts/backup-db.sh` takes a consistent online backup of the SQLite DB into `~/backups/` on the
-server (gzip, keeps newest 14). Run manually: `/opt/home-security/scripts/backup-db.sh`.
-
-Backups live on the same instance, so they protect against bad data/deploys, not losing the instance.
-Copy one to your Mac occasionally:
-```bash
-scp -i ~/Documents/home_security_new "ubuntu@13.206.228.27:backups/*.gz" ~/Downloads/
-```
-
-Restore (stops the backend briefly):
-```bash
-cd /opt/home-security
-gunzip -c ~/backups/data-YYYYMMDD-HHMMSS.sqlite.gz > /tmp/restore.sqlite
-docker compose -f docker-compose.prod.yml stop backend
-docker run --rm -v home-security_backend-data:/data -v /tmp:/r alpine \
-  sh -c "rm -f /data/data.sqlite-wal /data/data.sqlite-shm && cp /r/restore.sqlite /data/data.sqlite"
-docker compose -f docker-compose.prod.yml start backend
-```
+The database is not backed up (a deliberate choice). It survives deploys and reboots because it
+lives in a Docker volume, but it is lost if the volume or the instance is deleted. Never run
+`docker compose down -v` or `docker volume rm` on the server.
 
 ## Server hardening already in place
 
@@ -128,14 +111,12 @@ docker compose -f docker-compose.prod.yml start backend
 
 ## Pending one-time setup (needs the maintainer to run it)
 
-Daily backups via cron and 1 GB swap (the 1 GB RAM box can run out of memory while compiling
-`better-sqlite3` during a build). Check with `crontab -l` and `swapon --show`; if missing, run on the server:
+1 GB swap (the 1 GB RAM box can run out of memory while compiling `better-sqlite3` during a build).
+Check with `swapon --show`; if empty, run on the server:
 ```bash
 sudo fallocate -l 1G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab
-(crontab -l 2>/dev/null; echo "30 20 * * * /opt/home-security/scripts/backup-db.sh >> \$HOME/backups/backup.log 2>&1") | crontab -
 ```
-(20:30 UTC = 02:00 IST.)
 
 ## Troubleshooting
 
@@ -159,7 +140,7 @@ line from `authorized_keys`. Never paste a private key into chat, issues, or log
 - Auth token is the raw user id — unsigned, never expires (`backend/src/auth-middleware.js`).
 - Mosquitto allows anonymous clients, no TLS (`mosquitto/mosquitto.conf`), and is open to the internet.
 - No HTTPS on the API.
-- Single instance, backups on the same disk, SQLite (fine for a prototype, not for scale).
+- Single instance, no database backups, SQLite (fine for a prototype, not for scale).
 
 ## Local development
 
