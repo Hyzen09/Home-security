@@ -182,3 +182,33 @@ backend, over a real MQTT broker, to real device-simulator processes:
 - **Real FCM push** — stood in with a WebSocket channel, isolated behind a
   single module (`backend/src/ws.js`) so swapping it for the real service later
   shouldn't touch anything else.
+
+## Deploying to EC2
+
+`docker-compose.prod.yml` runs `backend` + `mosquitto` as containers (`backend/Dockerfile`
+builds the API image; the sqlite file lives in the named `backend-data` volume so it survives
+rebuilds). `.github/workflows/deploy.yml` redeploys over SSH on every push to `main`.
+
+**One-time instance setup:**
+```bash
+# Ubuntu 22.04 instance, security group open on 22 (your IP only), 4000, 1883
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER && newgrp docker
+
+sudo mkdir -p /opt/home-security && sudo chown $USER /opt/home-security
+git clone https://github.com/Hyzen09/Home-security.git /opt/home-security
+cd /opt/home-security/backend && cp .env.example .env
+# edit .env: set a real MANUFACTURING_KEY, e.g. `openssl rand -hex 32`
+
+cd /opt/home-security
+docker compose -f docker-compose.prod.yml up -d --build
+curl http://localhost:4000/health
+```
+
+**GitHub repo secrets** (Settings → Secrets and variables → Actions) for the deploy workflow:
+`EC2_HOST` (instance public/Elastic IP), `EC2_USER` (e.g. `ubuntu`), `EC2_SSH_KEY` (the
+private key matching a key already authorized on the instance, i.e. in `~/.ssh/authorized_keys`).
+
+No domain/TLS yet by design — see "TLS on MQTT..." above. The backend and MQTT broker are
+reachable over plain HTTP/TCP at the instance's IP; devices and the app are configured with
+that IP directly.
