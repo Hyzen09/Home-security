@@ -1,6 +1,6 @@
 import { Router } from "express";
 import db from "../db.js";
-import { setAlertMode, setOutput } from "../mqtt.js";
+import { setAlertMode, setOutput, stopAlarm } from "../mqtt.js";
 import { OUTPUTS, toPublicDevice } from "../device-view.js";
 
 const router = Router();
@@ -62,6 +62,14 @@ router.patch("/:id/outputs/:output", (req, res) => {
 
   setOutput(device.device_id, output, state);
   res.json({ ok: true, requested: { output, state } });
+});
+
+// Silences a sounding alarm but leaves the unit armed for the next detection.
+router.post("/:id/alarm/stop", (req, res) => {
+  const device = ownedDeviceOr404(req, res);
+  if (!device) return;
+  stopAlarm(device.device_id);
+  res.json({ ok: true });
 });
 
 // Disarming also silences an alarm that's currently sounding (handled on the unit).

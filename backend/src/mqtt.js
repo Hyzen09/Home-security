@@ -7,6 +7,7 @@ const BROKER_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 // Device protocol (firmware/src/main.cpp, simulator/device-sim.js):
 //   devices/{id}/commands  <- {type:"output_set", output:"green"|"yellow"|"red"|"buzzer", state}
 //                             {type:"alert_mode_set", active}
+//                             {type:"alarm_stop"}  (silence; stays armed)
 //   devices/{id}/state     -> {green, yellow, red, buzzer, alarm, presence, alert_mode_active, uptime_ms} (retained)
 //   devices/{id}/events    -> {type:"sensor_trigger"} on each new presence detection, {type:"heartbeat"}
 
@@ -105,6 +106,10 @@ export function sendCommand(deviceId, command) {
 
 export function setAlertMode(deviceId, active) {
   sendCommand(deviceId, { type: "alert_mode_set", active });
+}
+
+export function stopAlarm(deviceId) {
+  sendCommand(deviceId, { type: "alarm_stop" });
 }
 
 export function setOutput(deviceId, output, state) {
