@@ -1,13 +1,14 @@
 import { Router } from "express";
 import crypto from "crypto";
 import db from "../db.js";
+import { requireAuth } from "../auth-middleware.js";
+import { createSession, deleteSession } from "../sessions.js";
 import { DEFAULT_SETTINGS, normalizePhone, toProfile } from "../user-view.js";
 
 const router = Router();
 
 // PROTOTYPE AUTH: no OTP, no password — name + phone number is the whole
-// credential, and the session token is the user id (see auth-middleware.js).
-// Real product needs phone verification and signed, expiring tokens.
+// credential. Real product needs phone verification.
 
 function readCredentials(req, res) {
   const name = String(req.body?.name ?? "").trim();
@@ -28,7 +29,7 @@ function readCredentials(req, res) {
   return { name, phone };
 }
 
-const session = (user) => ({ token: user.id, ...toProfile(user) });
+const session = (user) => ({ token: createSession(user.id), ...toProfile(user) });
 
 router.post("/register", (req, res) => {
   const creds = readCredentials(req, res);
@@ -60,6 +61,11 @@ router.post("/login", (req, res) => {
     return res.status(401).json({ error: "Name doesn't match this phone number" });
   }
   res.json(session(user));
+});
+
+router.post("/logout", requireAuth, (req, res) => {
+  deleteSession(req.token);
+  res.json({ ok: true });
 });
 
 export default router;

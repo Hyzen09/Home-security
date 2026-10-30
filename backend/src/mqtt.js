@@ -4,6 +4,12 @@ import { pushToUser } from "./ws.js";
 
 const BROKER_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 
+// Device protocol (firmware/src/main.cpp, simulator/device-sim.js):
+//   devices/{id}/commands  <- {type:"output_set", output:"green"|"yellow"|"red"|"buzzer", state}
+//                             {type:"alert_mode_set", active}
+//   devices/{id}/state     -> {green, yellow, red, buzzer, alarm, presence, alert_mode_active, uptime_ms} (retained)
+//   devices/{id}/events    -> {type:"sensor_trigger"} on each new presence detection, {type:"heartbeat"}
+
 export const client = mqtt.connect(BROKER_URL, {
   clientId: "cloud-backend-" + Math.random().toString(16).slice(2),
 });
@@ -26,6 +32,8 @@ function ownerOf(deviceId) {
   return row?.owner_user_id || null;
 }
 
+const bit = (v) => (v ? 1 : 0);
+
 client.on("message", (topic, payloadBuf) => {
   let msg;
   try {
@@ -35,57 +43,58 @@ client.on("message", (topic, payloadBuf) => {
     return;
   }
   const deviceId = deviceIdFromTopic(topic);
+  const device = db.prepare("SELECT * FROM devices WHERE device_id = ?").get(deviceId);
+  if (!device) return; // unknown or prototype-1 unit
 
   db.prepare("UPDATE devices SET last_seen = datetime('now') WHERE device_id = ?").run(deviceId);
 
-  if (topic.endsWith("/events")) {
-    if (msg.type === "sensor_trigger") {
-      // Hardware update: every ESP32 now carries its own relays + hooter +
-      // one PIR sensor. The device already sounds its own hooter locally and
-      // instantly on trigger (see firmware/src/main.cpp) — no pairing, no
-      // hub lookup, no cloud round-trip needed for that any more. The
-      // cloud's job here is purely logging + notification.
-      const device = db.prepare("SELECT * FROM devices WHERE device_id = ?").get(deviceId);
-      if (!device) {
-        console.warn(`[mqtt] sensor_trigger from unknown device_id=${deviceId}, ignoring`);
-        return;
-      }
-      const alertActive = !!device.alert_mode_active;
+  if (topic.endsWith("/events") && msg.type === "sensor_trigger") {
+    // The unit already sounds its own buzzer locally when armed; the cloud's
+    // job here is logging + notification.
+    const alertActive = !!device.alert_mode_active;
+    db.prepare("INSERT INTO sensor_events (device_id, alert_mode_active) VALUES (?, ?)").run(deviceId, bit(alertActive));
+    console.log(`[mqtt] sensor_trigger device=${deviceId} alert_mode_active=${alertActive}`);
 
-      db.prepare(
-        "INSERT INTO sensor_events (device_id, alert_mode_active) VALUES (?, ?)"
-      ).run(deviceId, alertActive ? 1 : 0);
-
-      console.log(`[mqtt] sensor_trigger device=${deviceId} alert_mode_active=${alertActive}`);
-
-      const userId = ownerOf(deviceId);
-      if (userId) {
-        pushToUser(userId, {
-          type: "sensor_event",
-          device_id: deviceId,
-          alert_mode_active: alertActive,
-          ts: new Date().toISOString(),
-        });
-      }
+    const userId = ownerOf(deviceId);
+    if (userId) {
+      pushToUser(userId, {
+        type: "sensor_event",
+        device_id: deviceId,
+        alert_mode_active: alertActive,
+        ts: new Date().toISOString(),
+      });
     }
-    // heartbeat: last_seen update above is enough for the prototype
   }
 
   if (topic.endsWith("/state")) {
     db.prepare(
-      `UPDATE devices SET relay1_state = ?, relay2_state = ?, hooter_state = ?, alert_mode_active = ?
+      `UPDATE devices SET green_state = ?, yellow_state = ?, red_state = ?, buzzer_state = ?,
+         alarm_state = ?, presence = ?, alert_mode_active = ?
        WHERE device_id = ?`
     ).run(
-      msg.relay1 ? 1 : 0,
-      msg.relay2 ? 1 : 0,
-      msg.hooter ? 1 : 0,
-      msg.alert_mode_active ? 1 : 0,
+      bit(msg.green),
+      bit(msg.yellow),
+      bit(msg.red),
+      bit(msg.buzzer),
+      bit(msg.alarm),
+      bit(msg.presence),
+      bit(msg.alert_mode_active),
       deviceId
     );
 
     const userId = ownerOf(deviceId);
     if (userId) {
-      pushToUser(userId, { type: "device_state", device_id: deviceId, ...msg });
+      pushToUser(userId, {
+        type: "device_state",
+        device_id: deviceId,
+        green: !!msg.green,
+        yellow: !!msg.yellow,
+        red: !!msg.red,
+        buzzer: !!msg.buzzer,
+        alarm: !!msg.alarm,
+        presence: !!msg.presence,
+        alert_mode_active: !!msg.alert_mode_active,
+      });
     }
   }
 });
@@ -98,6 +107,6 @@ export function setAlertMode(deviceId, active) {
   sendCommand(deviceId, { type: "alert_mode_set", active });
 }
 
-export function setRelay(deviceId, relayIndex, state) {
-  sendCommand(deviceId, { type: "relay_set", relay_index: relayIndex, state });
+export function setOutput(deviceId, output, state) {
+  sendCommand(deviceId, { type: "output_set", output, state });
 }

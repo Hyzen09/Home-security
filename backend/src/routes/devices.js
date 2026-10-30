@@ -1,12 +1,12 @@
 import { Router } from "express";
 import db from "../db.js";
-import { setAlertMode, setRelay } from "../mqtt.js";
-import { toPublicDevice } from "../device-view.js";
+import { setAlertMode, setOutput } from "../mqtt.js";
+import { OUTPUTS, toPublicDevice } from "../device-view.js";
 
 const router = Router();
 
 router.get("/", (req, res) => {
-  const rows = db.prepare("SELECT * FROM devices WHERE owner_user_id = ?").all(req.user.id);
+  const rows = db.prepare("SELECT * FROM devices WHERE owner_user_id = ? ORDER BY created_at").all(req.user.id);
   res.json(rows.map(toPublicDevice));
 });
 
@@ -49,26 +49,28 @@ router.get("/:id/events", (req, res) => {
   res.json(events);
 });
 
-router.patch("/:id/relay/:n", (req, res) => {
+// Green / yellow / red traffic-light lamps and the buzzer.
+router.patch("/:id/outputs/:output", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;
-  const relayIndex = Number(req.params.n);
-  if (![1, 2].includes(relayIndex)) return res.status(400).json({ error: "relay must be 1 or 2" });
+  const { output } = req.params;
+  if (!OUTPUTS.includes(output)) {
+    return res.status(400).json({ error: `output must be one of ${OUTPUTS.join(", ")}` });
+  }
   const { state } = req.body || {};
   if (typeof state !== "boolean") return res.status(400).json({ error: "state (boolean) required" });
 
-  setRelay(device.device_id, relayIndex, state);
-  res.json({ ok: true, requested: { relay: relayIndex, state } });
+  setOutput(device.device_id, output, state);
+  res.json({ ok: true, requested: { output, state } });
 });
 
+// Disarming also silences an alarm that's currently sounding (handled on the unit).
 router.patch("/:id/alert-mode", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;
   const { active } = req.body || {};
   if (typeof active !== "boolean") return res.status(400).json({ error: "active (boolean) required" });
 
-  // No billing gate any more (payment gateway removed) - alert mode is
-  // freely toggleable.
   setAlertMode(device.device_id, active);
   res.json({ ok: true, requested: { active } });
 });
@@ -76,9 +78,7 @@ router.patch("/:id/alert-mode", (req, res) => {
 // Unclaims rather than deleting the row: device_secret (the unit's
 // permanent factory credential) must survive this, since the physical unit
 // still has it burned in and would otherwise be unable to ever self-claim
-// again. The unit itself isn't told — it keeps believing it's claimed until
-// it's physically re-provisioned (new owner_user_id over its local
-// hotspot) or factory-reset.
+// again. The unit itself isn't told; holding its BOOT button for 5s resets it.
 router.delete("/:id", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;

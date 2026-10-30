@@ -1,4 +1,5 @@
 import { WebSocketServer } from "ws";
+import { userForToken } from "./sessions.js";
 
 // Prototype stand-in for FCM push: app clients open a WebSocket and get
 // live JSON events (sensor triggers, device state changes).
@@ -12,11 +13,12 @@ export function initWs(server) {
 
   wss.on("connection", (socket, req) => {
     const url = new URL(req.url, "http://localhost");
-    const userId = url.searchParams.get("user_id");
-    if (!userId) {
-      socket.close(4000, "user_id query param required");
+    const user = userForToken(url.searchParams.get("token"));
+    if (!user) {
+      socket.close(4001, "valid token query param required");
       return;
     }
+    const userId = user.id;
     if (!clientsByUser.has(userId)) clientsByUser.set(userId, new Set());
     clientsByUser.get(userId).add(socket);
     console.log(`[ws] client connected user=${userId}`);

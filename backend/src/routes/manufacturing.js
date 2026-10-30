@@ -30,7 +30,7 @@ router.post("/register-device", (req, res) => {
 
   db.prepare(
     "INSERT INTO devices (device_id, device_secret, status, firmware_version) VALUES (?, ?, 'unclaimed', ?)"
-  ).run(device_id, device_secret, firmware_version || "0.1.0-prototype");
+  ).run(device_id, device_secret, firmware_version || "0.2.0-proto2");
 
   res.status(201).json({ device_id, device_secret });
 });

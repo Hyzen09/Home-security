@@ -11,6 +11,22 @@ const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
+// Bump to start from an empty database when the data model changes
+// incompatibly. v2 = prototype 2 (traffic-light + buzzer + radar hardware,
+// saved WiFi networks, session tokens); all prototype-1 data is discarded.
+const SCHEMA_VERSION = 2;
+if (db.pragma("user_version", { simple: true }) < SCHEMA_VERSION) {
+  db.exec(`
+    DROP TABLE IF EXISTS sessions;
+    DROP TABLE IF EXISTS wifi_networks;
+    DROP TABLE IF EXISTS sensor_events;
+    DROP TABLE IF EXISTS devices;
+    DROP TABLE IF EXISTS users;
+  `);
+  db.pragma(`user_version = ${SCHEMA_VERSION}`);
+  console.log(`[db] reset to schema v${SCHEMA_VERSION}`);
+}
+
 db.exec(`
 -- phone is the account's unique identity (two people can share a name);
 -- login requires name + phone to match. settings is a JSON object.
@@ -22,13 +38,29 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Hardware update: every ESP32 is now identical and self-contained — 2 relays
--- + 1 hooter + 1 PIR sensor each. No more hub/sensor split, no pairing.
--- device_secret is burned in at flash time by the .exe provisioning tool and
--- is the device's permanent credential (never nulled) — it's what the device
--- itself presents to POST /provisioning/claim-device to prove its identity,
--- replacing the old single-use QR claim_token.
--- name is the owner's label for the unit, unique per owner.
+-- Only a SHA-256 of each bearer token is stored.
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- The account's saved WiFi networks, handed to each new unit over its local
+-- setup hotspot. Each unit keeps its own copy once provisioned.
+CREATE TABLE IF NOT EXISTS wifi_networks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  ssid TEXT NOT NULL,
+  password TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (user_id, ssid)
+);
+
+-- One row per physical unit (ESP32 + radar + 3-colour traffic light + buzzer).
+-- device_secret is burned in at flash time and is the unit's permanent
+-- credential for /provisioning/*. name is the owner's label, unique per
+-- owner; wifi_ssid is the network the unit reported when it claimed itself.
 CREATE TABLE IF NOT EXISTS devices (
   device_id TEXT PRIMARY KEY,
   device_secret TEXT NOT NULL,
@@ -36,16 +68,19 @@ CREATE TABLE IF NOT EXISTS devices (
   name TEXT,
   status TEXT NOT NULL DEFAULT 'unclaimed', -- unclaimed | claimed
   firmware_version TEXT,
+  wifi_ssid TEXT,
   last_seen TEXT,
   alert_mode_active INTEGER NOT NULL DEFAULT 0,
-  relay1_state INTEGER NOT NULL DEFAULT 0,
-  relay2_state INTEGER NOT NULL DEFAULT 0,
-  hooter_state INTEGER NOT NULL DEFAULT 0,
+  green_state INTEGER NOT NULL DEFAULT 0,
+  yellow_state INTEGER NOT NULL DEFAULT 0,
+  red_state INTEGER NOT NULL DEFAULT 0,
+  buzzer_state INTEGER NOT NULL DEFAULT 0,
+  alarm_state INTEGER NOT NULL DEFAULT 0,
+  presence INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- device_id identifies which unit fired (each ESP32 = exactly one sensor,
--- so there's no separate sensor_index to track).
+-- A presence detection by a unit's radar.
 CREATE TABLE IF NOT EXISTS sensor_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   device_id TEXT NOT NULL REFERENCES devices(device_id),
@@ -53,16 +88,6 @@ CREATE TABLE IF NOT EXISTS sensor_events (
   ts TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
-
-// Additive migrations for databases created before these columns existed.
-function addColumnIfMissing(table, column, definition) {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
-  if (!columns.some((c) => c.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
-  }
-}
-addColumnIfMissing("users", "settings", "TEXT NOT NULL DEFAULT '{}'");
-addColumnIfMissing("devices", "name", "TEXT");
 
 export function nextDefaultDeviceName(ownerUserId) {
   const taken = new Set(
@@ -74,15 +99,6 @@ export function nextDefaultDeviceName(ownerUserId) {
   for (let i = 1; ; i++) {
     if (!taken.has(`device ${i}`)) return `Device ${i}`;
   }
-}
-
-for (const row of db
-  .prepare("SELECT device_id, owner_user_id FROM devices WHERE status = 'claimed' AND name IS NULL ORDER BY created_at")
-  .all()) {
-  db.prepare("UPDATE devices SET name = ? WHERE device_id = ?").run(
-    nextDefaultDeviceName(row.owner_user_id),
-    row.device_id
-  );
 }
 
 export default db;

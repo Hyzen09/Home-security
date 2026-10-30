@@ -37,24 +37,24 @@ router.post("/claim-device", (req, res) => {
   if (!device) return;
   const { owner_user_id } = req.body;
   if (!owner_user_id) return res.status(400).json({ error: "owner_user_id required" });
+  const wifiSsid = typeof req.body.wifi_ssid === "string" ? req.body.wifi_ssid.slice(0, 32) : null;
 
   const owner = db.prepare("SELECT * FROM users WHERE id = ?").get(owner_user_id);
   if (!owner) return res.status(404).json({ error: "unknown owner_user_id" });
 
   if (device.status === "claimed") {
     if (device.owner_user_id === owner_user_id) {
-      // Already claimed by this same account — treat as success so retrying
-      // firmware/simulator doesn't see an error on every subsequent boot.
-      return res.json(toPublicDevice(device));
+      // Already claimed by this same account (retry, or re-added on another
+      // network) — succeed, and record the network it's on now.
+      if (wifiSsid) db.prepare("UPDATE devices SET wifi_ssid = ? WHERE device_id = ?").run(wifiSsid, device.device_id);
+      return res.json(toPublicDevice(db.prepare("SELECT * FROM devices WHERE device_id = ?").get(device.device_id)));
     }
     return res.status(409).json({ error: "device already claimed by another account" });
   }
 
-  db.prepare("UPDATE devices SET status = 'claimed', owner_user_id = ?, name = ? WHERE device_id = ?").run(
-    owner_user_id,
-    nextDefaultDeviceName(owner_user_id),
-    device.device_id
-  );
+  db.prepare(
+    "UPDATE devices SET status = 'claimed', owner_user_id = ?, name = ?, wifi_ssid = ? WHERE device_id = ?"
+  ).run(owner_user_id, nextDefaultDeviceName(owner_user_id), wifiSsid, device.device_id);
   res.json(toPublicDevice(db.prepare("SELECT * FROM devices WHERE device_id = ?").get(device.device_id)));
 });
 
@@ -69,8 +69,9 @@ router.post("/reset-device", (req, res) => {
   db.transaction(() => {
     db.prepare("DELETE FROM sensor_events WHERE device_id = ?").run(device.device_id);
     db.prepare(
-      `UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, last_seen = NULL,
-         alert_mode_active = 0, relay1_state = 0, relay2_state = 0, hooter_state = 0
+      `UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, wifi_ssid = NULL,
+         last_seen = NULL, alert_mode_active = 0, green_state = 0, yellow_state = 0, red_state = 0,
+         buzzer_state = 0, alarm_state = 0, presence = 0
        WHERE device_id = ?`
     ).run(device.device_id);
   })();
