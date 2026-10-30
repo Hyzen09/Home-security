@@ -3,6 +3,13 @@
 **Android app:** [download the latest APK](https://github.com/Hyzen09/Home-security/releases/latest/download/home-security.apk)
 (all versions on the [Releases](https://github.com/Hyzen09/Home-security/releases) page).
 
+> **Prototype 2 (current):** each unit is an ESP32 DevKit with an Ai-Thinker Rd-03L_V2 24 GHz radar
+> (OT2 → D4), a traffic light (green D18, yellow D19, red D21) and a buzzer (D22), all controlled from
+> the app; the BOOT button (hold 5 s) factory-resets it. Accounts keep multiple saved WiFi networks
+> (2.4 GHz only) and each unit is assigned one when added. Server-side details are in
+> [DEPLOYMENT.md](DEPLOYMENT.md). The sections below describe prototype 1 (ESP8266, relays + hooter)
+> and are kept as history.
+
 > **Repo scope:** this repository tracks only the **server-side components** —
 > `backend/`, `mosquitto/`, `docker-compose.yml` — of the larger prototype
 > described below. The Flutter app and ESP32/ESP8266 firmware are developed
