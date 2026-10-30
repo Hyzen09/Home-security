@@ -1,9 +1,10 @@
 import { Router } from "express";
 import db from "../db.js";
-import { setAlertMode, setOutput, stopAlarm } from "../mqtt.js";
-import { OUTPUTS, toPublicDevice } from "../device-view.js";
+import { setAlertMode, setOutput, setRadarConfig, startRadarCalibration, stopAlarm } from "../mqtt.js";
+import { OUTPUTS, radarSettingsOf, toPublicDevice } from "../device-view.js";
 
 const router = Router();
+const RADAR_NOT_CONNECTED = "The radar's serial pins aren't connected (radar TX → D25, RX → D26)";
 
 router.get("/", (req, res) => {
   const rows = db.prepare("SELECT * FROM devices WHERE owner_user_id = ? ORDER BY created_at").all(req.user.id);
@@ -62,6 +63,46 @@ router.patch("/:id/outputs/:output", (req, res) => {
 
   setOutput(device.device_id, output, state);
   res.json({ ok: true, requested: { output, state } });
+});
+
+// Radar tuning, applied by the unit over the radar's serial port; the unit
+// reports the outcome as a radar_config_result push. Range is in radar units
+// of 0.7 m; sensitivity is a dB offset on the calibrated thresholds (positive
+// = fewer false alarms).
+router.patch("/:id/radar", (req, res) => {
+  const device = ownedDeviceOr404(req, res);
+  if (!device) return;
+  const current = radarSettingsOf(device);
+  const body = req.body || {};
+  const settings = {
+    max_range_units: body.max_range_units ?? current.max_range_units ?? 12,
+    no_person_delay_s: body.no_person_delay_s ?? current.no_person_delay_s ?? 30,
+    sensitivity: body.sensitivity ?? current.sensitivity ?? 0,
+  };
+  const outOfRange = (v, lo, hi) => !Number.isInteger(v) || v < lo || v > hi;
+  if (outOfRange(settings.max_range_units, 1, 12)) {
+    return res.status(400).json({ error: "max_range_units must be 1–12 (0.7–8.4 m)" });
+  }
+  if (outOfRange(settings.no_person_delay_s, 10, 120)) {
+    return res.status(400).json({ error: "no_person_delay_s must be 10–120" });
+  }
+  if (outOfRange(settings.sensitivity, -10, 20)) {
+    return res.status(400).json({ error: "sensitivity must be -10 to +20 dB" });
+  }
+  if (!device.radar_ok) return res.status(409).json({ error: RADAR_NOT_CONNECTED });
+  if (device.calibrating) return res.status(409).json({ error: "Wait for the calibration to finish" });
+
+  setRadarConfig(device.device_id, settings);
+  res.status(202).json({ ok: true, requested: settings });
+});
+
+router.post("/:id/radar/calibrate", (req, res) => {
+  const device = ownedDeviceOr404(req, res);
+  if (!device) return;
+  if (!device.radar_ok) return res.status(409).json({ error: RADAR_NOT_CONNECTED });
+  if (device.calibrating) return res.status(409).json({ error: "Already calibrating" });
+  startRadarCalibration(device.device_id);
+  res.status(202).json({ ok: true, seconds: 120 });
 });
 
 // Silences a sounding alarm but leaves the unit armed for the next detection.

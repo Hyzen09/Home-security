@@ -77,6 +77,11 @@ CREATE TABLE IF NOT EXISTS devices (
   buzzer_state INTEGER NOT NULL DEFAULT 0,
   alarm_state INTEGER NOT NULL DEFAULT 0,
   presence INTEGER NOT NULL DEFAULT 0,
+  radar_settings TEXT NOT NULL DEFAULT '{}',
+  radar_ok INTEGER NOT NULL DEFAULT 0,
+  target_cm INTEGER,
+  calibrating INTEGER NOT NULL DEFAULT 0,
+  calibration_progress INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -88,6 +93,20 @@ CREATE TABLE IF NOT EXISTS sensor_events (
   ts TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
+
+// Additive changes within a schema version (no data loss). radar_settings is
+// JSON: {max_range_units, no_person_delay_s, sensitivity, calibrated}, as last
+// reported by the unit.
+function addColumnIfMissing(table, column, definition) {
+  if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+addColumnIfMissing("devices", "radar_settings", "TEXT NOT NULL DEFAULT '{}'");
+addColumnIfMissing("devices", "radar_ok", "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("devices", "target_cm", "INTEGER");
+addColumnIfMissing("devices", "calibrating", "INTEGER NOT NULL DEFAULT 0");
+addColumnIfMissing("devices", "calibration_progress", "INTEGER NOT NULL DEFAULT 0");
 
 export function nextDefaultDeviceName(ownerUserId) {
   const taken = new Set(
