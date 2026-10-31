@@ -14,7 +14,9 @@ db.pragma("foreign_keys = ON");
 // Bump to start from an empty database when the data model changes
 // incompatibly. v2 = prototype 2 (traffic-light + buzzer + radar hardware,
 // saved WiFi networks, session tokens); all prototype-1 data is discarded.
-const SCHEMA_VERSION = 2;
+// v3 = empty-room calibration removed (its devices columns are gone); all v2
+// data is discarded.
+const SCHEMA_VERSION = 3;
 if (db.pragma("user_version", { simple: true }) < SCHEMA_VERSION) {
   db.exec(`
     DROP TABLE IF EXISTS sessions;
@@ -80,8 +82,6 @@ CREATE TABLE IF NOT EXISTS devices (
   radar_settings TEXT NOT NULL DEFAULT '{}',
   radar_ok INTEGER NOT NULL DEFAULT 0,
   target_cm INTEGER,
-  calibrating INTEGER NOT NULL DEFAULT 0,
-  calibration_progress INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS sensor_events (
 `);
 
 // Additive changes within a schema version (no data loss). radar_settings is
-// JSON: {max_range_units, no_person_delay_s, sensitivity, calibrated}, as last
+// JSON: {max_range_units, no_person_delay_s, sensitivity, near_threshold}, as last
 // reported by the unit.
 function addColumnIfMissing(table, column, definition) {
   if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column)) {
@@ -105,8 +105,6 @@ function addColumnIfMissing(table, column, definition) {
 addColumnIfMissing("devices", "radar_settings", "TEXT NOT NULL DEFAULT '{}'");
 addColumnIfMissing("devices", "radar_ok", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("devices", "target_cm", "INTEGER");
-addColumnIfMissing("devices", "calibrating", "INTEGER NOT NULL DEFAULT 0");
-addColumnIfMissing("devices", "calibration_progress", "INTEGER NOT NULL DEFAULT 0");
 
 export function nextDefaultDeviceName(ownerUserId) {
   const taken = new Set(

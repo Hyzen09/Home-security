@@ -1,6 +1,6 @@
 import { Router } from "express";
 import db from "../db.js";
-import { setAlertMode, setOutput, setRadarConfig, startRadarCalibration, stopAlarm } from "../mqtt.js";
+import { setAlertMode, setOutput, setRadarConfig, stopAlarm } from "../mqtt.js";
 import { OUTPUTS, radarSettingsOf, toPublicDevice } from "../device-view.js";
 
 const router = Router();
@@ -67,8 +67,10 @@ router.patch("/:id/outputs/:output", (req, res) => {
 
 // Radar tuning, applied by the unit over the radar's serial port; the unit
 // reports the outcome as a radar_config_result push. Range is in radar units
-// of 0.7 m; sensitivity is a dB offset on the calibrated thresholds (positive
-// = fewer false alarms).
+// of 0.7 m; sensitivity is a dB offset on every gate's threshold (positive =
+// fewer false alarms); near_threshold is the trigger threshold in dB of the two
+// nearest gates (0 = the radar's own default), where the radar's own leakage
+// shows up as a constant detection.
 router.patch("/:id/radar", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;
@@ -78,6 +80,7 @@ router.patch("/:id/radar", (req, res) => {
     max_range_units: body.max_range_units ?? current.max_range_units ?? 12,
     no_person_delay_s: body.no_person_delay_s ?? current.no_person_delay_s ?? 30,
     sensitivity: body.sensitivity ?? current.sensitivity ?? 0,
+    near_threshold: body.near_threshold ?? current.near_threshold ?? 0,
   };
   const outOfRange = (v, lo, hi) => !Number.isInteger(v) || v < lo || v > hi;
   if (outOfRange(settings.max_range_units, 1, 12)) {
@@ -86,23 +89,16 @@ router.patch("/:id/radar", (req, res) => {
   if (outOfRange(settings.no_person_delay_s, 10, 120)) {
     return res.status(400).json({ error: "no_person_delay_s must be 10–120" });
   }
-  if (outOfRange(settings.sensitivity, -10, 20)) {
-    return res.status(400).json({ error: "sensitivity must be -10 to +20 dB" });
+  if (outOfRange(settings.sensitivity, -30, 20)) {
+    return res.status(400).json({ error: "sensitivity must be -30 to +20 dB" });
+  }
+  if (settings.near_threshold !== 0 && outOfRange(settings.near_threshold, 10, 95)) {
+    return res.status(400).json({ error: "near_threshold must be 0 (default) or 10–95 dB" });
   }
   if (!device.radar_ok) return res.status(409).json({ error: RADAR_NOT_CONNECTED });
-  if (device.calibrating) return res.status(409).json({ error: "Wait for the calibration to finish" });
 
   setRadarConfig(device.device_id, settings);
   res.status(202).json({ ok: true, requested: settings });
-});
-
-router.post("/:id/radar/calibrate", (req, res) => {
-  const device = ownedDeviceOr404(req, res);
-  if (!device) return;
-  if (!device.radar_ok) return res.status(409).json({ error: RADAR_NOT_CONNECTED });
-  if (device.calibrating) return res.status(409).json({ error: "Already calibrating" });
-  startRadarCalibration(device.device_id);
-  res.status(202).json({ ok: true, seconds: 120 });
 });
 
 // Silences a sounding alarm but leaves the unit armed for the next detection.

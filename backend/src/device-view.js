@@ -35,9 +35,7 @@ export function toPublicDevice(row) {
       max_range_units: radar.max_range_units ?? null,
       no_person_delay_s: radar.no_person_delay_s ?? null,
       sensitivity: radar.sensitivity ?? 0,
-      calibrated: !!radar.calibrated,
-      calibrating: !!row.calibrating,
-      calibration_progress: row.calibration_progress ?? 0,
+      near_threshold: radar.near_threshold ?? 0,
     },
   };
 }
