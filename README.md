@@ -1,8 +1,7 @@
 # Home Security — IoT prototype
 
 **Android app:** [download the latest APK](https://github.com/Hyzen09/Home-security/releases/latest/download/home-security.apk)
-(v2.3.0, signed with a release key — coming from v2.2.0 or older you must uninstall the old app once; all versions on the
-[Releases](https://github.com/Hyzen09/Home-security/releases) page).
+(v2.2.0; all versions on the [Releases](https://github.com/Hyzen09/Home-security/releases) page).
 
 A home-security prototype. Each **unit** is an ESP32 with a 24 GHz radar (detects whether someone is in the room), a
 traffic light and a buzzer. An **Android app** shows every unit live, switches its lamps and buzzer, arms an *alert mode*
@@ -309,7 +308,7 @@ Last full run: **2026-11-01**, against the **production** backend on EC2, a real
   again and came back Online.
 - WiFi password check: a wrong password was refused and not saved; the right one was accepted (an earlier version of this check
   verified nothing — see "Known gaps" for the pitfall).
-- App v2.3.0 built by `tools/release-app.sh` (production address in every ABI, no LAN address, not debuggable, signed with the release key) and published as a GitHub Release; GitHub's stored SHA-256 matches the local build. On the phone it holds a live connection to the AWS server, over both WiFi and mobile data.
+- App v2.2.0 (the published release): built against the production address, no LAN address compiled in, not debuggable; GitHub's stored SHA-256 matches the build. On the phone it holds a live connection to the AWS server, over both WiFi and mobile data. A release-signed v2.3.0 build was also made and verified, then withdrawn from GitHub at the maintainer's request, so the latest published app is still v2.2.0.
 
 **Locally, with a fake unit** (throwaway broker and database): online/offline timing and recovery, no stale alarm after a backend
 restart, WebSocket keep-alive, and the whole remove-and-reset flow including a unit that was offline at deletion and a stale flag
