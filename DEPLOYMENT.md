@@ -211,23 +211,29 @@ The app source (`app/`) isn't in this repo, but its APK is published as a releas
 Permanent link to the newest version (works as long as the asset is named `home-security.apk`):
 `https://github.com/Hyzen09/Home-security/releases/latest/download/home-security.apk`
 
-Publish a new version from the maintainer's Mac (bump `version:` in `app/pubspec.yaml` first):
-```bash
-cd app && flutter build apk --release
-cp build/app/outputs/flutter-apk/app-release.apk /tmp/home-security.apk
-gh release create app-vX.Y.Z /tmp/home-security.apk --repo Hyzen09/Home-security --target main \
-  --title "Home Security app vX.Y.Z (Android)" --notes "What changed"
-```
-Verify what was uploaded against the local build (GitHub stores a SHA-256 for each asset):
-```bash
-gh api repos/Hyzen09/Home-security/releases/tags/app-vX.Y.Z --jq '.assets[0].digest'
-shasum -a 256 /tmp/home-security.apk
-```
-The release notes can come from a file: `gh release create ... --notes-file notes.md`. Current release: **app-v2.2.0**.
+Publish a new version from the maintainer's Mac (bump `version:` in `app/pubspec.yaml` first) with `tools/release-app.sh`.
+It builds the release APK **explicitly against production** (`--dart-define=BACKEND_HOST=13.206.228.27`) and refuses to bless
+the APK unless every check passes:
 
-The APK is signed with this Mac's debug keystore (`~/.android/debug.keystore`). Phones only accept
-an update signed with the same key, so build releases on this Mac, or set up a real release key
-before distributing widely. The backend address is compiled in from `app/lib/config.dart`.
+```bash
+tools/release-app.sh                                   # build + check, no publishing
+tools/release-app.sh --check path/to/app-release.apk   # check an existing APK only
+tools/release-app.sh --publish app-vX.Y.Z --notes-file notes.md [--allow-debug-signing]
+```
+Checks: version matches `pubspec.yaml`; not debuggable; signature and zipalign verify; **every ABI's `libapp.so` contains
+`13.206.228.27:4000` and no `192.168.x.x` / `127.0.0.1` / `localhost` / `10.0.2.2` backend address**. `--publish` creates the
+release with the asset named `home-security.apk` (this keeps the permanent link above working) and then compares GitHub's stored
+SHA-256 with the local build. A debug-signed APK needs `--allow-debug-signing` to be published, so it is a conscious choice.
+Current release: **app-v2.2.0**; the same source rebuilt against production reproduces its SHA-256 byte for byte.
+
+Manual equivalent (what the script automates): `flutter build apk --release --dart-define=BACKEND_HOST=13.206.228.27`, then
+`gh release create app-vX.Y.Z home-security.apk --repo Hyzen09/Home-security --target main --notes-file notes.md`, then
+`gh api repos/Hyzen09/Home-security/releases/tags/app-vX.Y.Z --jq '.assets[0].digest'` against `shasum -a 256`.
+
+**Not production-grade yet:** releases are signed with this Mac's *debug* keystore (`~/.android/debug.keystore`; the template's
+`TODO` is still in `app/android/app/build.gradle.kts`), so a build from another machine or a regenerated key cannot update an
+existing install, and the app talks plain HTTP/WebSocket (`usesCleartextTraffic`) because the server has no TLS (no domain yet).
+Both are listed under "Known gaps before real users".
 
 ## Local development
 
