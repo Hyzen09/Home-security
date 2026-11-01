@@ -224,16 +224,22 @@ Checks: version matches `pubspec.yaml`; not debuggable; signature and zipalign v
 `13.206.228.27:4000` and no `192.168.x.x` / `127.0.0.1` / `localhost` / `10.0.2.2` backend address**. `--publish` creates the
 release with the asset named `home-security.apk` (this keeps the permanent link above working) and then compares GitHub's stored
 SHA-256 with the local build. A debug-signed APK needs `--allow-debug-signing` to be published, so it is a conscious choice.
-Current release: **app-v2.2.0**; the same source rebuilt against production reproduces its SHA-256 byte for byte.
+Current release: **app-v2.3.0** (signed with the release key; v2.2.0 rebuilt from the same source reproduced its SHA-256 byte for byte).
 
 Manual equivalent (what the script automates): `flutter build apk --release --dart-define=BACKEND_HOST=13.206.228.27`, then
 `gh release create app-vX.Y.Z home-security.apk --repo Hyzen09/Home-security --target main --notes-file notes.md`, then
 `gh api repos/Hyzen09/Home-security/releases/tags/app-vX.Y.Z --jq '.assets[0].digest'` against `shasum -a 256`.
 
-**Not production-grade yet:** releases are signed with this Mac's *debug* keystore (`~/.android/debug.keystore`; the template's
-`TODO` is still in `app/android/app/build.gradle.kts`), so a build from another machine or a regenerated key cannot update an
-existing install, and the app talks plain HTTP/WebSocket (`usesCleartextTraffic`) because the server has no TLS (no domain yet).
-Both are listed under "Known gaps before real users".
+**Release signing.** Since v2.3.0 the APK is signed with a dedicated release keystore, `~/Documents/home-security-release.jks`
+(alias `home-security`, RSA 2048, valid to 2054), configured through `app/android/key.properties` (both gitignored; the password
+lives only in `key.properties`). Gradle uses it automatically when `key.properties` exists and falls back to the debug key when it
+doesn't, in which case `tools/release-app.sh` warns and `--publish` needs `--allow-debug-signing`.
+**Back up the `.jks` file and its password** (e.g. in a password manager): if they are lost nobody can ever update the app in place,
+and every phone would have to uninstall first. Never commit or share them. Releases up to v2.2.0 were signed with a different (debug)
+key, so moving from them to v2.3.0 or later needs a one-time uninstall; from v2.3.0 on, updates install normally.
+
+**Not production-grade yet:** the app talks plain HTTP/WebSocket (`usesCleartextTraffic`) because the server has no TLS (no domain
+yet). Listed under "Known gaps before real users".
 
 ## Local development
 
