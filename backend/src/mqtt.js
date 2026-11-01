@@ -11,6 +11,7 @@ const BROKER_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 //                             {type:"alarm_stop"}  (silence; stays armed)
 //                             {type:"radar_config", max_range_units, no_person_delay_s, sensitivity, near_threshold}
 //                             {type:"ping"}  (every 5 s; the unit answers with a heartbeat event)
+//                             {type:"sync"}  (the unit was removed in the app: it asks POST /provisioning/status and resets)
 //   devices/{id}/state     -> {green, yellow, red, buzzer, alarm, presence, alert_mode_active,
 //                              radar_ok, target_cm, uptime_ms} (retained)
 //   devices/{id}/events    -> {type:"sensor_trigger"} on each new presence detection, {type:"heartbeat"},
@@ -66,10 +67,12 @@ function noteOnline(deviceId, online) {
 export function checkDevices() {
   if (!client.connected) return; // our own broker link is down: say nothing about the units
   const ping = checks++ % PING_EVERY_N_CHECKS === 0;
-  const rows = db.prepare("SELECT * FROM devices WHERE status = 'claimed'").all();
+  // Units removed in the app and still waiting to reset are pinged too, so a lost
+  // "sync" nudge is repeated within seconds (their reply triggers it, see below).
+  const rows = db.prepare("SELECT * FROM devices WHERE status = 'claimed' OR reset_pending = 1").all();
   for (const row of rows) {
     if (ping) sendCommand(row.device_id, { type: "ping" });
-    noteOnline(row.device_id, isOnline(row));
+    if (row.status === "claimed") noteOnline(row.device_id, isOnline(row));
   }
 }
 setInterval(checkDevices, CHECK_INTERVAL_MS);
@@ -91,6 +94,9 @@ client.on("message", (topic, payloadBuf, packet) => {
   if (!packet.retain) {
     db.prepare("UPDATE devices SET last_seen = datetime('now') WHERE device_id = ?").run(deviceId);
     noteOnline(deviceId, true);
+    // Removed in the app while it was offline (or the nudge got lost): it is talking
+    // to us now, so tell it again. It answers by asking /provisioning/status.
+    if (device.reset_pending && device.status !== "claimed") requestSync(deviceId);
   }
 
   if (topic.endsWith("/events") && msg.type === "sensor_trigger") {
@@ -181,6 +187,19 @@ client.on("message", (topic, payloadBuf, packet) => {
     }
   }
 });
+
+// Tells a unit to ask the backend (HTTP, with its device_secret) whether it was
+// removed from its owner's account and must reset. It is only a nudge: the broker
+// is open to anyone, so the unit acts on the backend's answer, never on this message.
+// Sent at most every 10 s per unit.
+const SYNC_MIN_GAP_MS = 10_000;
+const lastSync = new Map(); // device_id -> when the last sync went out
+export function requestSync(deviceId) {
+  const now = Date.now();
+  if (now - (lastSync.get(deviceId) ?? 0) < SYNC_MIN_GAP_MS) return;
+  lastSync.set(deviceId, now);
+  sendCommand(deviceId, { type: "sync" });
+}
 
 export function sendCommand(deviceId, command) {
   client.publish(`devices/${deviceId}/commands`, JSON.stringify(command));

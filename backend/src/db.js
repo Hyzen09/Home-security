@@ -107,6 +107,9 @@ function addColumnIfMissing(table, column, definition) {
 addColumnIfMissing("devices", "radar_settings", "TEXT NOT NULL DEFAULT '{}'");
 addColumnIfMissing("devices", "radar_ok", "INTEGER NOT NULL DEFAULT 0");
 addColumnIfMissing("devices", "target_cm", "INTEGER");
+// Set when the owner removes a unit in the app: the unit must factory-reset itself
+// the next time it is reachable. Cleared by /provisioning/reset-device and on claim.
+addColumnIfMissing("devices", "reset_pending", "INTEGER NOT NULL DEFAULT 0");
 
 export function nextDefaultDeviceName(ownerUserId) {
   const taken = new Set(

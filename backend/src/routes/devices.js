@@ -1,6 +1,6 @@
 import { Router } from "express";
 import db from "../db.js";
-import { setAlertMode, setOutput, setRadarConfig, stopAlarm } from "../mqtt.js";
+import { requestSync, setAlertMode, setOutput, setRadarConfig, stopAlarm } from "../mqtt.js";
 import { OUTPUTS, isOnline, radarSettingsOf, toPublicDevice } from "../device-view.js";
 
 const router = Router();
@@ -137,13 +137,16 @@ router.patch("/:id/alert-mode", (req, res) => {
 // Unclaims rather than deleting the row: device_secret (the unit's
 // permanent factory credential) must survive this, since the physical unit
 // still has it burned in and would otherwise be unable to ever self-claim
-// again. The unit itself isn't told; holding its BOOT button for 5s resets it.
+// again. The unit is told to factory-reset itself so it goes back to setup mode
+// (shows up in "Add device" again): reset_pending records that, and the unit is
+// nudged now if it's online, or as soon as it next talks to us if it isn't (mqtt.js).
 router.delete("/:id", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;
-  db.prepare("UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL WHERE device_id = ?").run(
-    device.device_id
-  );
+  db.prepare(
+    "UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, reset_pending = 1 WHERE device_id = ?"
+  ).run(device.device_id);
+  requestSync(device.device_id);
   res.json({ ok: true });
 });
 

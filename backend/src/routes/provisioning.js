@@ -56,10 +56,21 @@ router.post("/claim-device", (req, res) => {
     return res.status(409).json({ error: "device already claimed by another account" });
   }
 
+  // reset_pending = 0: a stale removal flag must never reset a unit that was just set up again.
   db.prepare(
-    "UPDATE devices SET status = 'claimed', owner_user_id = ?, name = ?, wifi_ssid = ?, last_seen = datetime('now') WHERE device_id = ?"
+    "UPDATE devices SET status = 'claimed', owner_user_id = ?, name = ?, wifi_ssid = ?, last_seen = datetime('now'), reset_pending = 0 WHERE device_id = ?"
   ).run(owner_user_id, nextDefaultDeviceName(owner_user_id), wifiSsid, device.device_id);
   res.json(toPublicDevice(db.prepare("SELECT * FROM devices WHERE device_id = ?").get(device.device_id)));
+});
+
+// The unit's answer to a "sync" nudge (mqtt.js): was it removed from its owner's
+// account in the app? If so it factory-resets itself, so it goes back to setup mode
+// and can be added again. Authenticated with the unit's device_secret like the
+// other two routes, because the nudge itself travels over the open broker.
+router.post("/status", (req, res) => {
+  const device = authenticateDevice(req, res);
+  if (!device) return;
+  res.json({ reset: !!device.reset_pending && device.status !== "claimed" });
 });
 
 // Long-press factory reset on the unit. Removes it from its owner's account
@@ -75,7 +86,7 @@ router.post("/reset-device", (req, res) => {
     db.prepare(
       `UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, wifi_ssid = NULL,
          last_seen = NULL, alert_mode_active = 0, green_state = 0, yellow_state = 0, red_state = 0,
-         buzzer_state = 0, alarm_state = 0, presence = 0
+         buzzer_state = 0, alarm_state = 0, presence = 0, reset_pending = 0
        WHERE device_id = ?`
     ).run(device.device_id);
   })();

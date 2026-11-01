@@ -121,7 +121,7 @@ identities, so every unit has to be re-registered and re-flashed with `tools/fla
 
 Device protocol over MQTT (see `backend/src/mqtt.js`): commands `output_set` (green/yellow/red/buzzer),
 `alert_mode_set`, `alarm_stop`, `radar_config` (range, no-person delay, sensitivity, close-range threshold),
-`ping`; units publish retained `state` and `sensor_trigger`/`heartbeat`/`radar_info` events.
+`ping`, `sync`; units publish retained `state` and `sensor_trigger`/`heartbeat`/`radar_info` events.
 
 **Online / offline.** Every 5 s the backend sends `ping` to each claimed unit, and the unit answers with a
 `heartbeat` event (it also sends one every 30 s on its own). Any live (non-retained) message from a unit
@@ -135,6 +135,14 @@ A unit that loses WiFi retries the saved network every 20 s indefinitely and com
 A unit that can't reach the broker backs off its retries (3 s up to 30 s) and each attempt blocks it for at most 4 s,
 so its radar and local alarm keep working with the internet down. A unit that couldn't claim itself (server
 unreachable) keeps retrying every 30 s instead of waiting for a power cycle.
+
+**Removing a unit in the app resets it.** `DELETE /devices/:id` unclaims the unit, sets `devices.reset_pending = 1`
+and sends the unit a `sync` nudge. The nudge is not trusted (the broker is open to anyone): the unit answers it by
+calling `POST /provisioning/status` with its `device_secret`, and only if that says `reset: true` does it factory-reset
+itself (forgets WiFi/owner, back to its `SECURE-<id>` hotspot, so it can be added again). A unit that was offline at
+the time is pinged like a claimed one and nudged again, at most every 10 s, as soon as it answers, so it resets itself
+the moment it is back. `/provisioning/reset-device` and a new claim both clear the flag, so a stale flag can never
+reset a unit that was set up again. Units on older firmware ignore `sync`; they still need the 5 s BOOT-button reset.
 
 **App live connection.** The WebSocket (`/ws`) gets a `{"type":"hb"}` message and a protocol ping every 20 s; sockets
 that don't answer the ping are terminated. The app reconnects when it hears nothing for 60 s, so a connection that
