@@ -5,10 +5,12 @@ export const OUTPUTS = ["green", "yellow", "red", "buzzer"];
 // One radar distance unit = 0.7 m (Rd-03L_V2 protocol).
 export const RADAR_UNIT_M = 0.7;
 
-// A unit counts as online while it has been heard from recently. It sends a
-// heartbeat every 30 s and the backend pings every 15 s (mqtt.js), so 45 s of
-// silence means it's unplugged or off WiFi.
-export const OFFLINE_AFTER_MS = 45_000;
+// A unit counts as online while it has been heard from recently. The backend
+// pings it every 5 s (mqtt.js) and it answers at once, so 15 s of silence is
+// three missed pings in a row: it's unplugged or off WiFi. Lower than that and
+// a slow reply (the unit blocks for a few seconds while it saves radar settings
+// or reconnects) would flip it offline for no reason.
+export const OFFLINE_AFTER_MS = 15_000;
 
 export function isOnline(row, now = Date.now()) {
   if (!row.last_seen) return false;

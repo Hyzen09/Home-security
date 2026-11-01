@@ -110,7 +110,7 @@ cd firmware && .pio-venv/bin/pio run -e esp32dev -t upload --upload-port /dev/cu
 
 Status LED on the unit: slow blink = setup hotspot is up, solid = online, **fast blink = online but the server rejected the unit**
 (see Troubleshooting), off = offline. In the app each unit shows an **Online / Offline** badge: the backend checks
-every unit every 15 s, so an unplugged unit shows Offline within about a minute, and a unit that lost WiFi keeps
+every unit every 5 s, so an unplugged unit shows Offline within about 15 seconds, and a unit that lost WiFi keeps
 retrying the saved network by itself and goes back to Online once it's in. Hold the BOOT button
 for 5 seconds to factory-reset a unit: it forgets its WiFi and owner, returns the radar to its default range
 (8.4 m), delay (30 s) and thresholds, and shows up in setup mode again.

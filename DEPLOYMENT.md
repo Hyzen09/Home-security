@@ -123,10 +123,12 @@ Device protocol over MQTT (see `backend/src/mqtt.js`): commands `output_set` (gr
 `alert_mode_set`, `alarm_stop`, `radar_config` (range, no-person delay, sensitivity, close-range threshold),
 `ping`; units publish retained `state` and `sensor_trigger`/`heartbeat`/`radar_info` events.
 
-**Online / offline.** Every 15 s the backend sends `ping` to each claimed unit, and the unit answers with a
+**Online / offline.** Every 5 s the backend sends `ping` to each claimed unit, and the unit answers with a
 `heartbeat` event (it also sends one every 30 s on its own). Any live (non-retained) message from a unit
-refreshes `devices.last_seen`; a unit not heard from for 45 s (`OFFLINE_AFTER_MS` in `device-view.js`) is
-`online: false` in the API and the app gets a `device_status` push when that changes (checked every 5 s).
+refreshes `devices.last_seen`; a unit not heard from for 15 s (`OFFLINE_AFTER_MS` in `device-view.js`, three missed
+pings) is `online: false` in the API and the app gets a `device_status` push when that changes (checked every 1 s), so a
+pulled plug shows as Offline in about 15–16 s. Don't go much lower: a unit can be busy for a few seconds (saving radar
+settings, reconnecting) and a threshold under ~10 s would flip it offline for no reason.
 Retained state replayed by the broker doesn't count as live. Commands to an offline unit get HTTP 409
 (`alarm/stop` is still allowed), and presence/alarm/target are reported as clear/none while it's offline.
 A unit that loses WiFi retries the saved network every 20 s indefinitely and comes back online by itself.

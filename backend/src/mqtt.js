@@ -10,7 +10,7 @@ const BROKER_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 //                             {type:"alert_mode_set", active}
 //                             {type:"alarm_stop"}  (silence; stays armed)
 //                             {type:"radar_config", max_range_units, no_person_delay_s, sensitivity, near_threshold}
-//                             {type:"ping"}  (every 15 s; the unit answers with a heartbeat event)
+//                             {type:"ping"}  (every 5 s; the unit answers with a heartbeat event)
 //   devices/{id}/state     -> {green, yellow, red, buzzer, alarm, presence, alert_mode_active,
 //                              radar_ok, target_cm, uptime_ms} (retained)
 //   devices/{id}/events    -> {type:"sensor_trigger"} on each new presence detection, {type:"heartbeat"},
@@ -44,8 +44,8 @@ const bit = (v) => (v ? 1 : 0);
 
 // ---------------- Online / offline ----------------
 
-const CHECK_INTERVAL_MS = 5_000; // how soon the app hears that a unit went quiet
-const PING_EVERY_N_CHECKS = 3; // so a ping goes out every 15 s
+const CHECK_INTERVAL_MS = 1_000; // how soon the app hears that a unit went quiet (after OFFLINE_AFTER_MS)
+const PING_EVERY_N_CHECKS = 5; // so a ping goes out every 5 s
 let checks = 0;
 const lastOnline = new Map(); // device_id -> the online value the app was last told
 
