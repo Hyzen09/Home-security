@@ -1,19 +1,140 @@
-# IoT Home Security — Prototype
+# Home Security — IoT prototype
 
 **Android app:** [download the latest APK](https://github.com/Hyzen09/Home-security/releases/latest/download/home-security.apk)
-(all versions on the [Releases](https://github.com/Hyzen09/Home-security/releases) page).
+(v2.2.0; all versions on the [Releases](https://github.com/Hyzen09/Home-security/releases) page).
 
-> **Prototype 2 (current):** each unit is an ESP32 DevKit with an Ai-Thinker Rd-03L_V2 24 GHz radar
-> (OT2 → D4), a traffic light (green D18, yellow D19, red D21) and a buzzer (D22), all controlled from
-> the app; the BOOT button (hold 5 s) factory-resets it. Accounts keep multiple saved WiFi networks
-> (2.4 GHz only) and each unit is assigned one when added. Server-side details are in
-> [DEPLOYMENT.md](DEPLOYMENT.md). The sections below describe prototype 1 (ESP8266, relays + hooter)
-> and are kept as history.
+A home-security prototype. Each **unit** is an ESP32 with a 24 GHz radar (detects whether someone is in the room), a
+traffic light and a buzzer. An **Android app** shows every unit live, switches its lamps and buzzer, arms an *alert mode*
+(the unit sounds its own buzzer the instant the radar sees someone new) and tunes the radar. A **cloud backend** (Node.js +
+Mosquitto on AWS EC2) sits between them so it works from anywhere, with the app on mobile data and the unit behind a home router.
 
-> **Repo scope:** this repository tracks only the **server-side components** —
-> `backend/`, `mosquitto/`, `docker-compose.yml` — of the larger prototype
-> described below. The Flutter app and ESP32/ESP8266 firmware are developed
-> in the same local working tree but are intentionally not part of this repo.
+> **Repo scope:** this repository tracks only the **server-side** code — `backend/`, `mosquitto/`, the compose files and the
+> deploy workflow. The Flutter app (`app/`), ESP32 firmware (`firmware/`), `tools/`, `simulator/` and the longer design notes
+> (`system_architecture.md`, `Documentation.html`, the SVG diagrams) live in the maintainer's local working tree and are
+> gitignored on purpose. The APK is published here under Releases. Server operations are in [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## Architecture
+
+```
+ HOME NETWORK                                    INTERNET            AWS EC2 · Docker Compose
+┌────────────────────────────────┐                              ┌────────────────────────────────────────┐
+│ SECURITY UNIT (ESP32)          │── MQTT :1883 ───────────────▶│ MOSQUITTO 2                            │
+│  radar · traffic light ·       │   state (retained), events   │  anonymous · no TLS · no persistence   │
+│  buzzer · BOOT button          │◀──────────────────────────── │                                        │
+│                                │   commands                   └───────────────▲────────────────────────┘
+│                                │                                              │ MQTT client
+│                                │── HTTP :4000 ───────────────▶┌───────────────┴────────────────────────┐
+│                                │   claim-device, status,      │ BACKEND (Node 20 · Express)            │
+└───────────────▲────────────────┘   reset-device               │  REST · WebSocket /ws · MQTT bridge    │
+                │ setup only: SoftAP "SECURE-<id>"              │  SQLite on a Docker volume             │
+                │ HTTP 192.168.4.1                              └───────────────▲────────────────────────┘
+┌───────────────┴────────────────┐                                              │ REST + WebSocket :4000
+│ PHONE (Flutter app, Android)   │──────────────────────────────────────────────┘
+└────────────────────────────────┘
+```
+
+**Why a cloud in the middle:** a phone on mobile data cannot open a connection to a unit behind a home router, and something
+has to authenticate users, remember state and push alerts. Units connect *out* to the broker, so no port is opened at home.
+
+**Design rules**
+
+1. **The alarm never depends on the cloud.** Radar → buzzer is decided on the unit, in milliseconds; the cloud only hears
+   about it afterwards.
+2. **The unit is the source of truth for its own state.** The backend shows what the unit last *reported*; a command is only
+   reflected once the unit confirms it.
+3. **Nothing is shown as live unless it was heard recently.** A unit that goes quiet shows Offline within about 15 seconds and
+   its alarm/presence read as clear.
+4. **The open broker is never trusted for identity.** Anyone on the internet can publish to Mosquitto, so a reset or ownership
+   change is only ever confirmed over authenticated HTTP using the unit's burned-in secret.
+5. **Every unit is identical and self-contained** — no hub, no pairing between units.
+
+**Components**
+
+| Part | Where | What it does |
+|---|---|---|
+| Security unit | `firmware/` (local) | ESP32 DevKit, Arduino/PlatformIO. Radar on D4 (+ UART D25/D26 for settings), traffic light D18/D19/D21, buzzer D22, BOOT button. Runs the local alarm, MQTT, and the setup hotspot |
+| Backend | `backend/` | Express REST API, MQTT bridge, WebSocket push, SQLite. Online/offline tracking, saved WiFi networks, unit registry |
+| MQTT broker | `mosquitto/` | Eclipse Mosquitto 2 carrying `devices/<id>/commands · state · events` |
+| Android app | `app/` (local), APK on Releases | Flutter. Login, saved WiFi, dashboard, Add Device, radar settings, alarm tone/notification, background monitor |
+| Flash tool | `tools/flash-device.sh` (local) | Registers a new unit, burns its identity, erases and flashes the board, checks it boots |
+| Hosting / CI | `docker-compose.prod.yml`, `.github/workflows/deploy.yml` | Push to `main` → GitHub Actions → SSH → rebuild on EC2 |
+
+**Key flows** (message-level detail is in `system_architecture.md` / `flow.svg`, kept locally)
+
+- **Add a unit.** Unit (setup mode) hosts the open hotspot `SECURE-<id>` → the app scans, joins it, reads `GET /info`, sends
+  `POST /provision {ssid, password, owner_user_id}` → the unit saves them and reboots → joins WiFi → connects MQTT → calls
+  `POST /provisioning/claim-device` with its secret → the account owns it (≈5 s end to end).
+- **Control.** App `PATCH /devices/:id/outputs/green` → backend publishes `output_set` → unit switches the pin and publishes its
+  retained `state` → backend stores it and pushes `device_state` over the WebSocket (≈0.3 s round trip). Commands to an
+  offline unit are refused with HTTP 409.
+- **Alarm.** Radar presence goes high (stable 200 ms) while armed → buzzer on **immediately, on the unit** → `sensor_trigger` +
+  state published → the app plays its alarm tone and shows a notification with Stop → Stop silences it, the unit stays armed.
+- **Online / offline.** Backend pings every unit every 5 s, the unit answers with a heartbeat; 15 s of silence = Offline
+  (pushed to the app). Measured on hardware with the power cut: Offline after 13 s, Online again 4 s after power returned.
+- **Remove a unit.** `DELETE /devices/:id` unclaims it, sets `reset_pending` and nudges the unit (`sync`); the unit asks
+  `POST /provisioning/status` with its secret and, only if told to, factory-resets itself back into setup mode (≈5 s). A unit that
+  was offline resets the moment it comes back.
+
+## Behaviour you can rely on
+
+| What | Value |
+|---|---|
+| Backend ping / online check / offline threshold | every 5 s / every 1 s / 15 s without a message |
+| WebSocket keep-alive / app reconnects after silence | every 20 s / 60 s |
+| Unit heartbeat | on connect, every 30 s, and as the answer to each ping |
+| Unit WiFi retry (after it has joined once) | every 20 s, forever |
+| Unit MQTT retry | 3 s, doubling to 30 s; each attempt blocks the unit for at most 4 s |
+| Unit claim retry | every 5 s five times, then every 30 s, forever |
+| Local alarm | new presence while armed → buzzer on immediately; off 5 s after presence clears |
+| Setup-mode WiFi scan (for the app's "can the unit see this network" check) | every 5 minutes, only while nobody is connected |
+| Add Device waits for the unit to appear | up to 60 s |
+
+| Status LED | Meaning |
+|---|---|
+| slow blink | setup hotspot is up, waiting for the app |
+| solid | online |
+| fast blink | online but the server rejected the unit (unknown id/secret — hold BOOT 5 s or re-flash) |
+| off | offline |
+
+**If something breaks:** a router outage, no internet, or a broker restart should each recover by themselves (the unit keeps
+retrying and the alarm keeps working locally) — see "What's verified" for which of these have actually been tested.
+
+## API reference (summary)
+
+**REST** (`http://<host>:4000`; `Bearer` = token from `/auth/register` or `/auth/login`)
+
+| Route | Auth | Purpose |
+|---|---|---|
+| `GET /health` | — | `{ok, mqtt}` — `mqtt` is the backend's own link to the broker |
+| `POST /auth/register` · `/auth/login` · `/auth/logout` | — / Bearer | name + phone (**no OTP**) → token |
+| `GET /me` · `PATCH /me/settings` | Bearer | profile, alert tone |
+| `GET/POST /me/wifi-networks` · `PATCH/DELETE /me/wifi-networks/:id` | Bearer | saved 2.4 GHz networks (8–63 char password, or empty) |
+| `GET /devices` · `GET /devices/:id` · `PATCH /devices/:id` | Bearer | list, one unit (with `online`), rename |
+| `PATCH /devices/:id/outputs/:output` | Bearer | `green` `yellow` `red` `buzzer` — 409 if offline |
+| `PATCH /devices/:id/alert-mode` | Bearer | arm / disarm — 409 if offline |
+| `PATCH /devices/:id/radar` | Bearer | range, delay, sensitivity, close-range threshold |
+| `POST /devices/:id/alarm/stop` | Bearer | silence, stay armed |
+| `GET /devices/:id/events` | Bearer | recent detections |
+| `DELETE /devices/:id` | Bearer | unclaim **and reset the unit** |
+| `POST /manufacturing/register-device` | `X-Manufacturing-Key` | new unit → `{device_id, device_secret}` |
+| `POST /provisioning/claim-device` · `/status` · `/reset-device` | `device_secret` | called by the unit itself |
+
+**Unit local HTTP** (setup hotspot only, `192.168.4.1`): `GET /info`, `POST /provision {ssid, password, owner_user_id}`.
+
+**MQTT** (`devices/<id>/…`): `commands` ← `output_set`, `alert_mode_set`, `alarm_stop`, `radar_config`, `ping`, `sync` ·
+`state` (retained) → green/yellow/red/buzzer/alarm/presence/alert_mode_active/radar_ok/target_cm · `events` → `sensor_trigger`,
+`heartbeat`, `radar_info`, `radar_config_result`.
+
+**WebSocket** (`/ws?token=…`): `device_state`, `device_status`, `sensor_event`, `radar_info`, `radar_config_result`,
+`device_removed`, `hb`.
+
+## Data model (schema v4)
+
+`users` (name, unique phone, settings) · `sessions` (SHA-256 of each token) · `wifi_networks` (per user, **password in plain
+text**) · `devices` (id, secret, owner, name, status, `wifi_ssid`, `last_seen`, lamp/buzzer/alarm/presence state, radar settings,
+`reset_pending`) · `sensor_events`. `PRAGMA user_version` holds the schema version; **bumping `SCHEMA_VERSION` in `db.js`
+drops every table** (the documented way to wipe production — all units must then be re-flashed). Details in
+[DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Setting up the project (prototype 2)
 
@@ -105,14 +226,18 @@ cd firmware && .pio-venv/bin/pio run -e esp32dev -t upload --upload-port /dev/cu
 ### 5. Add the unit in the app
 
 1. Install the APK from the link at the top (Android only — iOS can't scan for WiFi networks).
-2. Sign up with a name and phone number (no OTP), then save your home WiFi in the app. It must be a **2.4 GHz** network; the ESP32 can't join 5 GHz.
-3. **Add device**: the app finds the `SECURE-<device_id>` hotspot, joins it, and hands the unit your WiFi and account. The unit reboots onto your WiFi and claims itself.
+2. Sign up with a name and phone number (no OTP), then save your home WiFi in the app. It must be a **2.4 GHz** network; the ESP32
+   can't join 5 GHz. When you tap Save, the phone briefly joins the network with the password you typed, so a wrong password is
+   caught immediately (Android asks you to tap **Connect** once; "Save anyway" is offered if the network is out of the phone's range).
+3. **Add device**: the app finds the `SECURE-<device_id>` hotspot, joins it, and hands the unit your WiFi and account. The unit reboots
+   onto your WiFi and claims itself.
+4. **Remove a unit**: the trash icon removes it from your account **and resets it**, so it shows up under Add Device again — right
+   away if it is online, or as soon as it is back online. (Units flashed before 2026-11-01 ignore this and still need the BOOT button.)
 
 Status LED on the unit: slow blink = setup hotspot is up, solid = online, **fast blink = online but the server rejected the unit**
 (see Troubleshooting), off = offline. In the app each unit shows an **Online / Offline** badge: the backend checks
 every unit every 5 s, so an unplugged unit shows Offline within about 15 seconds, and a unit that lost WiFi keeps
-retrying the saved network by itself and goes back to Online once it's in. Removing a unit in the app
-resets it by itself (right away if it is online, or as soon as it is back online). You can also hold the BOOT button
+retrying the saved network by itself and goes back to Online once it's in. You can also hold the BOOT button
 for 5 seconds to factory-reset a unit: it forgets its WiFi and owner, returns the radar to its default range
 (8.4 m), delay (30 s) and thresholds, and shows up in setup mode again.
 
@@ -162,60 +287,80 @@ DEVICE_ID=<device_id> DEVICE_SECRET=<device_secret> OWNER_USER_ID=<your app user
 | The app says the radar isn't connected | the radar's TXD/RXD wires to D26/D25 (see the wiring table); presence still works from OT2 |
 | The app says someone is there when the room is empty | raise **Close-range threshold** (about 60 dB), then lower the range or raise sensitivity if it persists |
 | A flashed unit is rejected after the database was reset | a schema bump (see DEPLOYMENT.md → Database) deletes every registered unit; run `tools/flash-device.sh` again |
+| The app says "No nearby devices found yet" but the unit's light blinks slowly | Android rate-limits the app's WiFi scan. Wait a minute and press Search again |
+| "Couldn't join SECURE-…" while adding a unit | try again — the unit's periodic WiFi scan (every 5 min) can interrupt a phone that is connecting at that moment |
+| "Couldn't join "<network>" with that password" when saving a WiFi network | the password is wrong, or the network is out of the phone's range; "Save anyway" skips the check |
+| A unit shows Offline although it is plugged in | it can't reach your 2.4 GHz WiFi or the internet; it retries every 20 s by itself. Check `curl http://<host>:4000/health` shows `"mqtt":true` |
+| Removing a unit in the app didn't make it reappear under Add Device | the unit runs firmware from before 2026-11-01 (it ignores the reset). Hold BOOT for 5 s once, or re-flash it |
+
+## What's verified (prototype 2)
+
+Last full run: **2026-11-01**, against the **production** backend on EC2, a real ESP32 unit, a real Pixel phone and Chrome.
+
+**On real hardware / production**
+- Fresh start: database wiped (schema v4) → test account created in the app (Chrome) → `tools/flash-device.sh` registers, erases and
+  flashes a new unit and confirms it boots → the phone adds it (WiFi handover, MQTT, claim in ≈5 s) → Online on the phone and in Chrome.
+- All three lamps, the buzzer and alert mode switched through the API: **10 of 10 confirmed by the unit in 0.24–0.34 s**. A lamp
+  toggled from Chrome reached the real unit.
+- Power cut (board held in reset): **Offline after 13.1 s** (was 44 s with the earlier 45 s threshold), **Online again 4.4 s** after
+  power returned, with no re-setup. Chrome flipped by itself through the WebSocket.
+- Removing the unit in the app: the unit reset itself and was back in setup mode in ≈5 s, reappeared under Add Device, was added
+  again and came back Online.
+- WiFi password check: a wrong password was refused and not saved; the right one was accepted (an earlier version of this check
+  verified nothing — see "Known gaps" for the pitfall).
+- App v2.2.0 built and published as a GitHub Release; GitHub's stored SHA-256 matches the local build.
+
+**Locally, with a fake unit** (throwaway broker and database): online/offline timing and recovery, no stale alarm after a backend
+restart, WebSocket keep-alive, and the whole remove-and-reset flow including a unit that was offline at deletion and a stale flag
+that must never reset a re-added unit.
+
+**Not yet exercised:** a router outage, an internet outage, a restart of the production broker, a factory reset while the unit is
+offline, a wrong WiFi password reaching the unit, a 5 GHz-only network, and any long soak test.
+
+## Known gaps
+
+- **Security (prototype shortcuts, must be fixed before real users):** login is name + phone with **no OTP** and sessions never
+  expire; **no TLS** on HTTP, MQTT or WebSocket; saved WiFi passwords are **plain text** in SQLite and travel over HTTP; the broker is
+  **anonymous and public**, so anyone who knows a `device_id` can publish control commands (identity/reset changes are protected,
+  control is not); no database backups; single instance.
+- **No schedule:** alert mode is armed and disarmed manually (it survives a power cut); there is no timed alert window yet.
+- **iOS:** Add Device cannot work on iOS (Apple gives apps no WiFi scanning); the iOS build is unverified.
+- **No OTA firmware updates**, and push is a WebSocket stand-in for FCM, so swiping the app away stops alerts.
+- **Android quirks:** the app's WiFi scan is rate-limited by Android (if "No nearby devices found" shows while the unit's hotspot
+  is up, wait a minute and press Search again); an Add can fail once with "Couldn't join SECURE-…" if it lands on the unit's
+  periodic scan — just try again.
+- **Pitfall worth remembering:** the `wifi_iot` plugin only truly tests a WiFi password with `withInternet: false`; with `true`
+  it registers a network *suggestion* and reports success without checking anything.
+
+## Deploying to EC2
+
+The backend runs on AWS EC2 with Docker Compose and auto-deploys on every push to `main`.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the server details, CI/CD, operations, and troubleshooting.
+
+**One-time setup for a fresh instance:**
+```bash
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER && newgrp docker
+
+sudo mkdir -p /opt/home-security && sudo chown $USER /opt/home-security
+git clone https://github.com/Hyzen09/Home-security.git /opt/home-security
+cd /opt/home-security/backend && cp .env.example .env
+# edit .env: set a real MANUFACTURING_KEY, e.g. `openssl rand -hex 32`
+
+cd /opt/home-security
+docker compose -f docker-compose.prod.yml up -d --build
+curl http://localhost:4000/health
+```
 
 ---
 
-*Everything below this line is the original prototype 1 write-up (ESP8266, relays + hooter), kept as history.*
+# History — prototype 1 (kept for reference, no longer current)
 
-Working prototype of the system described in [system_architecture.md](system_architecture.md).
-The core loop (device → cloud → app, and app → cloud → device) has been verified **two
-ways**: through the real Flutter UI against the real backend with no hardware involved
-(Playwright/Chrome), and — for the first time — on **real physical hardware**: a flashed
-ESP8266-class board talking to the real backend over a real home WiFi network, discovered
-and provisioned by a real Android phone, with a real audible alarm. See "What's actually
-verified" below for exactly what that means.
+Everything below describes the **first prototype** (ESP8266 NodeMCU, 2 relays + hooter + PIR, schema v1) and is kept only as
+history. Several statements there are out of date — for example the ESP32 firmware **has since been flashed and run on real
+hardware** — so use the sections above for anything current.
 
-**Major hardware/flow correction, live in this prototype:** there is no payment gateway,
-wallet, or billing anywhere; **every unit is identical and self-contained** — 2 relays + 1
-hooter + 1 sensor each, no hub/sensor split, no pairing step; login is **name + phone, no
-OTP**; a freshly-flashed unit boots its own WiFi hotspot and is found by the app via
-**WiFi-SSID scan, not a QR code**; the app asks for the home WiFi once, right after login,
-and hands it to each new unit directly over that local hotspot. See
-system_architecture.md §9 for the reasoning behind each change.
-
-**[Documentation.html](Documentation.html)** is the maintained reference doc for this
-project — architecture, protocol reference, tech stack, run instructions, and current
-status in one page. Open it directly in a browser. It embeds
-[system_architecture.svg](system_architecture.svg) (static topology) and
-[flow.svg](flow.svg) (sequence diagrams); update those two together when the system changes.
-
-## Tech stack
-
-| Layer | Technology |
-|---|---|
-| Firmware — production target | ESP32, Arduino framework via PlatformIO, C++ — `firmware/` |
-| Firmware — bench-test target (real hardware available during dev) | ESP8266 (NodeMCU V3), same Arduino/PlatformIO toolchain — `firmware-esp8266-bench/` |
-| Firmware libraries | PubSubClient (MQTT), ArduinoJson, LittleFS (ESP8266) / Preferences (ESP32) for saved WiFi + claim state |
-| Cloud backend | Node.js + Express (REST), `mqtt` (MQTT client), `better-sqlite3`, `ws` (WebSocket push) |
-| MQTT broker | Eclipse Mosquitto |
-| Mobile app | Flutter (Dart) — targets Android (verified on real hardware) and iOS (written, unverified — no Xcode available here) |
-| App packages | Provider, `http`, `web_socket_channel`, `shared_preferences`, `wifi_scan`, `wifi_iot`, `network_info_plus` |
-| Native platform code | Kotlin (`MainActivity.kt`, Android alarm sound), Swift (`AppDelegate.swift`, iOS alarm sound — unverified) |
-| Provisioning tooling | Node.js CLI (`tools/provision-device.js`) + Bash (`tools/flash-device.sh`, drives `esptool.py` via PlatformIO for real flashing) |
-
-## Components
-
-| Dir | What it is | Status |
-|---|---|---|
-| `backend/` | Node/Express REST API + MQTT handling + SQLite + WebSocket push (no billing) | **Running, tested — against both the simulator and real hardware** |
-| `simulator/` | Node script standing in for a unit — speaks the real MQTT protocol | **Running, tested** |
-| `firmware/` | Real ESP32 Arduino/PlatformIO firmware, the production target | **Compiles clean** (RAM 15.2%, Flash 93.6%) — the toolchain download that stalled for most of this project's life finally finished. Still never run on real ESP32 hardware (none available), so pin assignments/polarity/on-chip behavior remain unverified. |
-| `firmware-esp8266-bench/` | ESP8266 port of the same firmware/protocol, for the NodeMCU V3 board actually on hand | **Compiled, flashed, and verified end-to-end on real hardware** — see below |
-| `tools/` | CLI stand-in for the `.exe` provisioning tool, plus a real flashing script | **Running, tested** — `provision-device.js` (registration) and `flash-device.sh` (erase + real flash via esptool.py) both exercised against real hardware |
-| `app/` | Flutter app (onboarding, WiFi details, nearby-device discovery, dashboard, relay/alert-mode control, remove device) | **Verified on a real Android phone**; iOS is written but unverified (see below) |
-| `mosquitto/`, `docker-compose.yml` | MQTT broker config. Broker is currently run natively via Homebrew, not Docker (Docker Desktop wasn't running) | **Running** |
-
-## Running it yourself (prototype 1, history)
+## Running it yourself (prototype 1)
 
 ```bash
 # 1. MQTT broker (prototype: no TLS/auth, see mosquitto/mosquitto.conf)
@@ -261,7 +406,7 @@ needs a real **Android** device (WiFi scan/join isn't available in a browser or 
 iOS — see below); for software-only testing, use the simulator's `OWNER_USER_ID`
 self-claim shortcut above instead and the unit just appears on the dashboard.
 
-## What's actually verified (not just "should work")
+## What was verified in prototype 1
 
 ### Software-only, via the real Flutter UI (Chrome, Playwright), against the real
 backend, over a real MQTT broker, to real device-simulator processes:
@@ -309,58 +454,3 @@ backend, over a real MQTT broker, to real device-simulator processes:
   reconnect
 
 `flutter analyze` is clean and the widget test (`app/test/widget_test.dart`) passes.
-
-## Deliberately not built yet / unverified
-
-- **ESP32 production firmware (`firmware/`) compiles clean but has never run on
-  real hardware** — no ESP32 board available. The `espressif32` toolchain
-  download that stalled for most of this project (confirmed stuck, not just
-  slow, across multiple earlier attempts) eventually finished; `pio run -e
-  esp32dev` now succeeds (RAM 15.2%, Flash 93.6% — worth watching if more
-  features get added, there isn't a lot of flash headroom left in the default
-  partition scheme). A real compile bug (`mqtt.publish` passing `char*` where
-  `uint8_t*` was expected) was found and fixed in this exact file via the
-  ESP8266 build before this ESP32 compile ever succeeded. Pin assignments,
-  relay polarity, and real on-chip behavior remain unverified until it's
-  actually flashed and run on an ESP32.
-- **Nearby-device discovery on iOS is not possible, by Apple's design** — not a
-  gap to fill later. iOS doesn't expose WiFi scanning to any third-party app, so
-  the "Add Device" flow is Android-only; the iOS fallback screen explains this
-  rather than pretending it's coming soon.
-- **iOS build entirely unverified** — this Mac's Xcode install is incomplete
-  (`flutter build ios` fails before even reaching a compiler: no CocoaPods
-  workspace generated). The native Swift alarm-sound implementation
-  (`ios/Runner/AppDelegate.swift`) and `Info.plist` entries are written against
-  Flutter's documented API for this project's template, but have never been
-  compiled or run.
-- **Real `.exe` provisioning tool for the ESP32 production target** —
-  `tools/flash-device.sh` does real flashing, but only for the ESP8266 bench
-  target; burning credentials into ESP32 NVS flash via the real tool is still
-  outstanding.
-- **TLS on MQTT and on the self-claim HTTP call, signed JWTs, OTA** — prototype
-  broker and auth are intentionally wide open (see `mosquitto/mosquitto.conf`
-  and `backend/src/auth-middleware.js` comments). Do not point this at a real
-  network.
-- **Real FCM push** — stood in with a WebSocket channel, isolated behind a
-  single module (`backend/src/ws.js`) so swapping it for the real service later
-  shouldn't touch anything else.
-
-## Deploying to EC2
-
-The backend runs on AWS EC2 with Docker Compose and auto-deploys on every push to `main`.
-See [DEPLOYMENT.md](DEPLOYMENT.md) for the server details, CI/CD, operations, and troubleshooting.
-
-**One-time setup for a fresh instance:**
-```bash
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER && newgrp docker
-
-sudo mkdir -p /opt/home-security && sudo chown $USER /opt/home-security
-git clone https://github.com/Hyzen09/Home-security.git /opt/home-security
-cd /opt/home-security/backend && cp .env.example .env
-# edit .env: set a real MANUFACTURING_KEY, e.g. `openssl rand -hex 32`
-
-cd /opt/home-security
-docker compose -f docker-compose.prod.yml up -d --build
-curl http://localhost:4000/health
-```

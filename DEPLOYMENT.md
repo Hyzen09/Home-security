@@ -1,7 +1,7 @@
 # Deployment
 
 How the backend is hosted, how changes reach production, and how to operate it.
-Last verified working: 2026-10-29.
+Last verified working: 2026-11-01 (deploys of `b938f14`, `1fb0848`, `743a91c`; production healthy with a live unit).
 
 > This repo is **public**. Never commit secrets, `.env` files, or private keys here.
 
@@ -94,6 +94,16 @@ $C up -d --force-recreate backend
 ```
 A new env var must also be added to `backend/.env.example` in git so the next person knows it exists.
 
+**Finding the `MANUFACTURING_KEY`.** `tools/flash-device.sh` needs it to register a new unit (the server answers 403 without it).
+It lives only in `backend/.env` on the server. Read it straight into a gitignored file without printing it:
+```bash
+ssh -i ~/Documents/home_security_new ubuntu@13.206.228.27 \
+  "grep '^MANUFACTURING_KEY=' /opt/home-security/backend/.env | cut -d= -f2-" > tools/.manufacturing-key
+MANUFACTURING_KEY="$(tr -d '\n' < tools/.manufacturing-key)" tools/flash-device.sh
+```
+If the line is missing the backend falls back to the built-in default `dev-manufacturing-key`. To set a new key, edit `.env`,
+then `$C up -d --force-recreate backend` (the database is kept; already-flashed units don't use the key).
+
 Roll back a bad deploy: `git revert <bad-sha> && git push` from your machine — the pipeline redeploys
 the previous state. Avoid `git reset` on the server; the next deploy undoes it.
 
@@ -101,7 +111,7 @@ The database is not backed up (a deliberate choice). It survives deploys and reb
 lives in a Docker volume, but it is lost if the volume or the instance is deleted. Never run
 `docker compose down -v` or `docker volume rm` on the server.
 
-## Database (schema v3, prototype 2)
+## Database (schema v4, prototype 2)
 
 SQLite tables (`backend/src/db.js`):
 - `users` — name, unique phone, `settings` JSON (`alert_tone`)
@@ -110,7 +120,8 @@ SQLite tables (`backend/src/db.js`):
 - `devices` — unit identity/secret, owner, name, `wifi_ssid` it claimed on, and live state:
   `green_state`/`yellow_state`/`red_state`/`buzzer_state`, `alarm_state`, `presence`, `alert_mode_active`,
   `radar_ok`, `target_cm`, and `radar_settings` JSON (`max_range_units`, `no_person_delay_s`, `sensitivity`,
-  `near_threshold`) as last reported by the unit
+  `near_threshold`) as last reported by the unit, and `reset_pending` (set when the owner removes the unit in the app,
+  cleared when it resets itself or is claimed again)
 - `sensor_events` — radar presence detections
 
 `PRAGMA user_version` holds the schema version. When `SCHEMA_VERSION` in `db.js` is higher than the
@@ -178,6 +189,9 @@ echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab
 | Build gets killed / hangs | Out of memory — make sure swap is on (see above). |
 | Disk full | `docker system df`, then `docker builder prune -af` and `docker image prune -af`. |
 | Random IPs in Mosquitto logs ("protocol error") | Internet scanners. Expected while the broker is anonymous and public. |
+| `/health` shows `"mqtt":false` | The backend can't reach its broker: check `$C ps` (mosquitto running?) and `$C logs mosquitto`. While it is false the backend says nothing about units (it can't know), but the app's REST view shows units Offline after 15 s without messages. |
+| Every unit shows Offline right after a deploy | Expected for a few seconds: the backend restarts, re-subscribes and pings; units answer within 5 s and flip back to Online. If it lasts longer, check `/health` and the mosquitto container. |
+| A deploy "worked" but a config change in `mosquitto.conf` isn't live | A push only recreates the broker if its compose definition changed; edited config needs `$C restart mosquitto` on the server (this briefly drops every unit and the backend; they reconnect by themselves). |
 
 Rotating the SSH key: generate a new keypair, append its `.pub` to `~/.ssh/authorized_keys` on the
 server (using the old key), test login with the new key, update `EC2_SSH_KEY`, then remove the old
@@ -204,6 +218,13 @@ cp build/app/outputs/flutter-apk/app-release.apk /tmp/home-security.apk
 gh release create app-vX.Y.Z /tmp/home-security.apk --repo Hyzen09/Home-security --target main \
   --title "Home Security app vX.Y.Z (Android)" --notes "What changed"
 ```
+Verify what was uploaded against the local build (GitHub stores a SHA-256 for each asset):
+```bash
+gh api repos/Hyzen09/Home-security/releases/tags/app-vX.Y.Z --jq '.assets[0].digest'
+shasum -a 256 /tmp/home-security.apk
+```
+The release notes can come from a file: `gh release create ... --notes-file notes.md`. Current release: **app-v2.2.0**.
+
 The APK is signed with this Mac's debug keystore (`~/.android/debug.keystore`). Phones only accept
 an update signed with the same key, so build releases on this Mac, or set up a real release key
 before distributing widely. The backend address is compiled in from `app/lib/config.dart`.
