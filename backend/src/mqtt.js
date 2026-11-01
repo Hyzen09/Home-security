@@ -1,7 +1,7 @@
 import mqtt from "mqtt";
 import db from "./db.js";
 import { pushToUser } from "./ws.js";
-import { radarSettingsOf, toPublicDevice } from "./device-view.js";
+import { isOnline, radarSettingsOf, toPublicDevice } from "./device-view.js";
 
 const BROKER_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 
@@ -10,6 +10,7 @@ const BROKER_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 //                             {type:"alert_mode_set", active}
 //                             {type:"alarm_stop"}  (silence; stays armed)
 //                             {type:"radar_config", max_range_units, no_person_delay_s, sensitivity, near_threshold}
+//                             {type:"ping"}  (every 15 s; the unit answers with a heartbeat event)
 //   devices/{id}/state     -> {green, yellow, red, buzzer, alarm, presence, alert_mode_active,
 //                              radar_ok, target_cm, uptime_ms} (retained)
 //   devices/{id}/events    -> {type:"sensor_trigger"} on each new presence detection, {type:"heartbeat"},
@@ -24,6 +25,7 @@ client.on("connect", () => {
   console.log(`[mqtt] connected to broker at ${BROKER_URL}`);
   client.subscribe("devices/+/events");
   client.subscribe("devices/+/state");
+  checkDevices();
 });
 
 client.on("error", (err) => console.error("[mqtt] error", err.message));
@@ -40,7 +42,39 @@ function ownerOf(deviceId) {
 
 const bit = (v) => (v ? 1 : 0);
 
-client.on("message", (topic, payloadBuf) => {
+// ---------------- Online / offline ----------------
+
+const CHECK_INTERVAL_MS = 5_000; // how soon the app hears that a unit went quiet
+const PING_EVERY_N_CHECKS = 3; // so a ping goes out every 15 s
+let checks = 0;
+const lastOnline = new Map(); // device_id -> the online value the app was last told
+
+// Tells the owner's app when a unit goes online/offline (only on a change).
+function noteOnline(deviceId, online) {
+  if (lastOnline.get(deviceId) === online) return;
+  lastOnline.set(deviceId, online);
+  const row = db.prepare("SELECT owner_user_id, last_seen FROM devices WHERE device_id = ?").get(deviceId);
+  console.log(`[mqtt] ${deviceId} is ${online ? "online" : "offline"}`);
+  if (row?.owner_user_id) {
+    pushToUser(row.owner_user_id, { type: "device_status", device_id: deviceId, online, last_seen: row.last_seen });
+  }
+}
+
+// Pings every claimed unit and marks the ones that have gone quiet offline. A
+// unit answers within a second, so a plugged-in unit never ages out; one that
+// is unplugged, or can't reach WiFi, stops answering.
+export function checkDevices() {
+  if (!client.connected) return; // our own broker link is down: say nothing about the units
+  const ping = checks++ % PING_EVERY_N_CHECKS === 0;
+  const rows = db.prepare("SELECT * FROM devices WHERE status = 'claimed'").all();
+  for (const row of rows) {
+    if (ping) sendCommand(row.device_id, { type: "ping" });
+    noteOnline(row.device_id, isOnline(row));
+  }
+}
+setInterval(checkDevices, CHECK_INTERVAL_MS);
+
+client.on("message", (topic, payloadBuf, packet) => {
   let msg;
   try {
     msg = JSON.parse(payloadBuf.toString());
@@ -52,7 +86,12 @@ client.on("message", (topic, payloadBuf) => {
   const device = db.prepare("SELECT * FROM devices WHERE device_id = ?").get(deviceId);
   if (!device) return; // unknown or prototype-1 unit
 
-  db.prepare("UPDATE devices SET last_seen = datetime('now') WHERE device_id = ?").run(deviceId);
+  // The broker replays a unit's retained state on every (re)subscribe, which
+  // says nothing about whether the unit is alive right now.
+  if (!packet.retain) {
+    db.prepare("UPDATE devices SET last_seen = datetime('now') WHERE device_id = ?").run(deviceId);
+    noteOnline(deviceId, true);
+  }
 
   if (topic.endsWith("/events") && msg.type === "sensor_trigger") {
     // The unit already sounds its own buzzer locally when armed; the cloud's
@@ -121,7 +160,10 @@ client.on("message", (topic, payloadBuf) => {
       deviceId
     );
 
-    const userId = ownerOf(deviceId);
+    // A retained state replayed on (re)subscribe is only what the unit last said
+    // before it went quiet; pushing it would e.g. start the phone alarm for a
+    // unit that died mid-alarm. The app reads that through REST, which masks it.
+    const userId = packet.retain ? null : ownerOf(deviceId);
     if (userId) {
       pushToUser(userId, {
         type: "device_state",

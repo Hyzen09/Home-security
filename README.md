@@ -15,6 +15,157 @@
 > described below. The Flutter app and ESP32/ESP8266 firmware are developed
 > in the same local working tree but are intentionally not part of this repo.
 
+## Setting up the project (prototype 2)
+
+All commands are for a Mac. `app/`, `firmware/`, `tools/` and `simulator/` exist only in the maintainer's
+local working tree (they are gitignored), so the flashing and app steps need that copy; the backend steps
+work from a plain clone of this repo.
+
+### 1. What you need
+
+| Tool | Used for |
+|---|---|
+| Node.js 20+ and npm | backend, `tools/`, simulator |
+| Docker | the production backend on EC2 (not needed for local development) |
+| Mosquitto (`brew install mosquitto`) | local MQTT broker |
+| PlatformIO | building and flashing the ESP32; the flash script uses its own copy in `firmware/.pio-venv` |
+| Flutter SDK + Android SDK | building the Android app |
+| An ESP32 DevKit and a USB **data** cable (not a charge-only one) | one unit |
+
+One-time PlatformIO setup. The first build then downloads the ESP32 toolchain (several hundred MB):
+```bash
+python3 -m venv firmware/.pio-venv
+firmware/.pio-venv/bin/pip install platformio
+```
+
+### 2. Wire a unit
+
+| Part | ESP32 pin | Notes |
+|---|---|---|
+| Radar VCC / GND | 3V3 / GND | Ai-Thinker Rd-03L_V2 |
+| Radar OT2 | D4 (GPIO4) | digital output, HIGH while it sees someone |
+| Radar TXD (OT1) → ESP32 | D26 | the firmware also accepts TX on D25 (it tries both pin orders and both 115200/256000 baud and remembers the one that answers) |
+| Radar RXD ← ESP32 | D25 | |
+| Traffic light green / yellow / red | D18 / D19 / D21 | HIGH = lit |
+| Active buzzer | D22 | HIGH = sounding |
+| BOOT button (on the board) | GPIO0 | hold 5 s = factory reset |
+
+The serial link is only needed for the radar settings in the app; presence detection works from OT2 alone.
+
+### 3. Run the backend
+
+**Production** is a Docker Compose stack on EC2 that redeploys on every push to `main` — see
+[DEPLOYMENT.md](DEPLOYMENT.md) for the server, CI/CD, and operations.
+
+**Local development:**
+```bash
+/opt/homebrew/opt/mosquitto/sbin/mosquitto -c mosquitto/mosquitto.conf -d   # broker on :1883
+cd backend && cp .env.example .env && npm install && npm run dev            # API on :4000
+```
+`backend/.env` holds `MANUFACTURING_KEY`, the secret that lets `tools/flash-device.sh` register new units.
+
+### 4. Flash a new unit — `tools/flash-device.sh`
+
+Plug the board in over USB and run:
+```bash
+tools/flash-device.sh                       # production backend (the default)
+tools/flash-device.sh --backend-url http://192.168.1.20:4000   # your local backend: use the Mac's LAN IP
+tools/flash-device.sh --port /dev/cu.usbserial-0001            # if more than one board is plugged in
+```
+
+| Option | Meaning |
+|---|---|
+| `--backend-url` | backend the unit registers with and later talks to. Defaults to the production server. `127.0.0.1`/`localhost` are rejected — the board can't reach them |
+| `--port` | serial port. Without it the script picks the first `/dev/cu.usbserial*`, `/dev/cu.SLAB_USBtoUART*` or `/dev/cu.wchusbserial*` |
+| `--host` | MQTT/HTTP host for the unit if it differs from the one in `--backend-url` |
+
+**Manufacturing key.** The script asks for it (typing is hidden), or read it from the environment:
+`MANUFACTURING_KEY=... tools/flash-device.sh`. It must equal `MANUFACTURING_KEY` in the target backend's
+`.env` (for a local backend started without a `.env` it is `dev-manufacturing-key`). Never commit it.
+
+**What the script does:**
+0. Checks from this Mac that the backend (`/health`) and the MQTT port answer, and refuses to flash if they don't — a unit flashed against an address that can't be reached never connects. It warns when the address is a private LAN IP (that unit only works on that network).
+1. Finds the board's serial port.
+2. Registers a brand-new unit with the backend (`tools/provision-device.js`, running `npm install` in `tools/` first if needed), which returns a `device_id` and `device_secret`.
+3. Writes them, plus the backend address, to `firmware/include/secrets.h` (gitignored — never edit it by hand).
+4. Erases the board's flash, so no WiFi or owner from an earlier flash survives.
+5. Compiles the firmware and uploads it. It also appends a line to `tools/flashed-devices.csv`.
+6. Resets the board and reads its boot log to confirm it came up and is hosting its setup hotspot.
+
+Every run creates a **new identity**. Run it once per physical board, not to update code (see below). When it
+finishes, the unit hosts an open WiFi hotspot called `SECURE-<device_id>` and blinks its status LED slowly,
+waiting for the app.
+
+**Updating the firmware on a unit that is already set up** (keeps its identity, saved WiFi and owner):
+```bash
+cd firmware && .pio-venv/bin/pio run -e esp32dev -t upload --upload-port /dev/cu.usbserial-0001
+.pio-venv/bin/pio device monitor -b 115200 --port /dev/cu.usbserial-0001   # serial log; Ctrl+C before flashing again
+```
+
+### 5. Add the unit in the app
+
+1. Install the APK from the link at the top (Android only — iOS can't scan for WiFi networks).
+2. Sign up with a name and phone number (no OTP), then save your home WiFi in the app. It must be a **2.4 GHz** network; the ESP32 can't join 5 GHz.
+3. **Add device**: the app finds the `SECURE-<device_id>` hotspot, joins it, and hands the unit your WiFi and account. The unit reboots onto your WiFi and claims itself.
+
+Status LED on the unit: slow blink = setup hotspot is up, solid = online, **fast blink = online but the server rejected the unit**
+(see Troubleshooting), off = offline. In the app each unit shows an **Online / Offline** badge: the backend checks
+every unit every 15 s, so an unplugged unit shows Offline within about a minute, and a unit that lost WiFi keeps
+retrying the saved network by itself and goes back to Online once it's in. Hold the BOOT button
+for 5 seconds to factory-reset a unit: it forgets its WiFi and owner, returns the radar to its default range
+(8.4 m), delay (30 s) and thresholds, and shows up in setup mode again.
+
+### 6. Tune the radar (in the app, per unit)
+
+| Setting | What it does |
+|---|---|
+| Detection range | ignores anything farther away (0.7 m steps, up to 8.4 m) |
+| Sensitivity | shifts the threshold of every distance zone, −30 to +20 dB. Lower = reacts to weaker movement |
+| Close-range threshold | threshold of the two nearest zones (0–1.4 m) on their own. The radar's own signal can show up there as a constant "someone is there"; raise it until that stops (about 60 dB on the test unit), or lower it to pick up a hand a few centimetres from the sensor. "Default" leaves the radar's own value |
+| No-person delay | how long the area must stay empty before it reports "No one there" (10–120 s) |
+
+**Save to radar** sends the values to the unit, which writes them to the radar's flash. The radar stops
+detecting for a moment while it is being written to.
+
+### 7. Build the Android app
+
+```bash
+cd app && flutter pub get
+flutter run                       # on a connected Android phone
+flutter build apk --release       # build/app/outputs/flutter-apk/app-release.apk
+```
+The backend address the app talks to is compiled in from `app/lib/config.dart`. To publish a new APK on GitHub
+Releases, follow "Android app download" in [DEPLOYMENT.md](DEPLOYMENT.md).
+
+### 8. Run without hardware (simulator)
+
+```bash
+cd tools && npm install && node provision-device.js   # prints device_id + device_secret
+cd simulator && npm install
+DEVICE_ID=<device_id> DEVICE_SECRET=<device_secret> OWNER_USER_ID=<your app user id> \
+  BACKEND_HTTP_URL=http://127.0.0.1:4000 npm start     # Enter toggles presence; AUTO_TOGGLE_MS=15000 does it on a timer
+```
+
+### Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| "No ESP32 USB-serial device found" | charge-only cable, or the board isn't recognised; try another cable, or pass `--port` (`ls /dev/cu.*` shows what is plugged in) |
+| Upload stops at "Connecting......" or fails with "multiple access on port?" | another program has the serial port — close any serial monitor or logger (`lsof /dev/cu.usbserial-0001`), then retry. If it still can't connect, hold the board's BOOT button as the upload starts |
+| The board reboots every ~2 seconds while a logger is attached | two programs are reading the port; the second one's reconnect pulses the reset line. Keep exactly one reader open |
+| `[provision] failed: 403` | the manufacturing key doesn't match the target backend's `.env` |
+| "isn't answering" / "MQTT broker ... isn't reachable" at step 0 | the backend or broker can't be reached from this Mac: for production check the EC2 instance and the security group (ports 4000 and 1883, see DEPLOYMENT.md); for a local backend start it first |
+| The script refuses `127.0.0.1` | give `--backend-url` the Mac's LAN IP (local backend) or the server's public IP |
+| The app says the unit "hasn't checked in yet" and the unit's light blinks fast | the unit joined your WiFi (so the password is fine) but the server rejected it: unknown device (it was flashed before a database reset or against another backend) or wrong owner. Hold BOOT for 5 s; if it still blinks fast, re-flash it with `tools/flash-device.sh` |
+| A unit's hotspot never appears in the app | it is already set up or offline — hold BOOT for 5 s to reset it; check the 2.4 GHz WiFi rule above |
+| The app says the radar isn't connected | the radar's TXD/RXD wires to D26/D25 (see the wiring table); presence still works from OT2 |
+| The app says someone is there when the room is empty | raise **Close-range threshold** (about 60 dB), then lower the range or raise sensitivity if it persists |
+| A flashed unit is rejected after the database was reset | a schema bump (see DEPLOYMENT.md → Database) deletes every registered unit; run `tools/flash-device.sh` again |
+
+---
+
+*Everything below this line is the original prototype 1 write-up (ESP8266, relays + hooter), kept as history.*
+
 Working prototype of the system described in [system_architecture.md](system_architecture.md).
 The core loop (device → cloud → app, and app → cloud → device) has been verified **two
 ways**: through the real Flutter UI against the real backend with no hardware involved
@@ -63,7 +214,7 @@ status in one page. Open it directly in a browser. It embeds
 | `app/` | Flutter app (onboarding, WiFi details, nearby-device discovery, dashboard, relay/alert-mode control, remove device) | **Verified on a real Android phone**; iOS is written but unverified (see below) |
 | `mosquitto/`, `docker-compose.yml` | MQTT broker config. Broker is currently run natively via Homebrew, not Docker (Docker Desktop wasn't running) | **Running** |
 
-## Running it yourself
+## Running it yourself (prototype 1, history)
 
 ```bash
 # 1. MQTT broker (prototype: no TLS/auth, see mosquitto/mosquitto.conf)

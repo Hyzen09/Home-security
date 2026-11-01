@@ -1,9 +1,20 @@
 import { Router } from "express";
 import db from "../db.js";
 import { setAlertMode, setOutput, setRadarConfig, stopAlarm } from "../mqtt.js";
-import { OUTPUTS, radarSettingsOf, toPublicDevice } from "../device-view.js";
+import { OUTPUTS, isOnline, radarSettingsOf, toPublicDevice } from "../device-view.js";
 
 const router = Router();
+
+// Commands are fire-and-forget over MQTT, so a unit that's off would drop them
+// silently and the app would show a switch that did nothing. Say so instead.
+function onlineOr409(device, res) {
+  if (isOnline(device)) return true;
+  res.status(409).json({
+    error: `${device.name || device.device_id} is offline. Check that it's plugged in and within WiFi range.`,
+    offline: true,
+  });
+  return false;
+}
 const RADAR_NOT_CONNECTED = "The radar's serial pins aren't connected (radar TX → D25, RX → D26)";
 
 router.get("/", (req, res) => {
@@ -60,6 +71,7 @@ router.patch("/:id/outputs/:output", (req, res) => {
   }
   const { state } = req.body || {};
   if (typeof state !== "boolean") return res.status(400).json({ error: "state (boolean) required" });
+  if (!onlineOr409(device, res)) return;
 
   setOutput(device.device_id, output, state);
   res.json({ ok: true, requested: { output, state } });
@@ -95,6 +107,7 @@ router.patch("/:id/radar", (req, res) => {
   if (settings.near_threshold !== 0 && outOfRange(settings.near_threshold, 10, 95)) {
     return res.status(400).json({ error: "near_threshold must be 0 (default) or 10–95 dB" });
   }
+  if (!onlineOr409(device, res)) return;
   if (!device.radar_ok) return res.status(409).json({ error: RADAR_NOT_CONNECTED });
 
   setRadarConfig(device.device_id, settings);
@@ -115,6 +128,7 @@ router.patch("/:id/alert-mode", (req, res) => {
   if (!device) return;
   const { active } = req.body || {};
   if (typeof active !== "boolean") return res.status(400).json({ error: "active (boolean) required" });
+  if (!onlineOr409(device, res)) return;
 
   setAlertMode(device.device_id, active);
   res.json({ ok: true, requested: { active } });

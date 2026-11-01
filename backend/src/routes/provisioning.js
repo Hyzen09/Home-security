@@ -46,14 +46,18 @@ router.post("/claim-device", (req, res) => {
     if (device.owner_user_id === owner_user_id) {
       // Already claimed by this same account (retry, or re-added on another
       // network) — succeed, and record the network it's on now.
-      if (wifiSsid) db.prepare("UPDATE devices SET wifi_ssid = ? WHERE device_id = ?").run(wifiSsid, device.device_id);
+      // The unit is calling us right now, so it is online.
+      db.prepare("UPDATE devices SET wifi_ssid = coalesce(?, wifi_ssid), last_seen = datetime('now') WHERE device_id = ?").run(
+        wifiSsid,
+        device.device_id
+      );
       return res.json(toPublicDevice(db.prepare("SELECT * FROM devices WHERE device_id = ?").get(device.device_id)));
     }
     return res.status(409).json({ error: "device already claimed by another account" });
   }
 
   db.prepare(
-    "UPDATE devices SET status = 'claimed', owner_user_id = ?, name = ?, wifi_ssid = ? WHERE device_id = ?"
+    "UPDATE devices SET status = 'claimed', owner_user_id = ?, name = ?, wifi_ssid = ?, last_seen = datetime('now') WHERE device_id = ?"
   ).run(owner_user_id, nextDefaultDeviceName(owner_user_id), wifiSsid, device.device_id);
   res.json(toPublicDevice(db.prepare("SELECT * FROM devices WHERE device_id = ?").get(device.device_id)));
 });

@@ -16,7 +16,9 @@ db.pragma("foreign_keys = ON");
 // saved WiFi networks, session tokens); all prototype-1 data is discarded.
 // v3 = empty-room calibration removed (its devices columns are gone); all v2
 // data is discarded.
-const SCHEMA_VERSION = 3;
+// v4 = no model change: a deliberate clean slate (2026-11-01) so connectivity
+// could be re-tested from a fresh account and a freshly flashed unit.
+const SCHEMA_VERSION = 4;
 if (db.pragma("user_version", { simple: true }) < SCHEMA_VERSION) {
   db.exec(`
     DROP TABLE IF EXISTS sessions;

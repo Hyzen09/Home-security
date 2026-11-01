@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import http from "http";
 
-import "./mqtt.js"; // connects to the broker and starts handling device messages
+import { client as mqttClient } from "./mqtt.js"; // connects to the broker and starts handling device messages
 import { initWs } from "./ws.js";
 import { requireAuth } from "./auth-middleware.js";
 
@@ -16,7 +16,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.get("/health", (req, res) => res.json({ ok: true }));
+// ok = the API is up (what the deploy and Docker health checks rely on); mqtt =
+// this backend's own link to the broker, which units talk through.
+app.get("/health", (req, res) => res.json({ ok: true, mqtt: mqttClient.connected }));
 
 app.use("/auth", authRoutes);
 app.use("/me", requireAuth, meRoutes);

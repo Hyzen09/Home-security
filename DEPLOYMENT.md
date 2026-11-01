@@ -11,7 +11,7 @@ Last verified working: 2026-10-29.
 |---|---|
 | Host | AWS EC2, region `ap-south-1` (Mumbai), Ubuntu 26.04, 2 vCPU / 1 GB RAM / 8 GB disk |
 | Address | Elastic IP `13.206.228.27` (fixed; survives reboots) |
-| Backend API | `http://13.206.228.27:4000` (health: `/health` → `{"ok":true}`) |
+| Backend API | `http://13.206.228.27:4000` (health: `/health` → `{"ok":true,"mqtt":true}`; `mqtt` is the backend's own link to the broker) |
 | MQTT broker | `mqtt://13.206.228.27:1883` (Mosquitto, anonymous, no TLS — prototype) |
 | App dir on server | `/opt/home-security` (a git clone of this repo, tracking `main`) |
 | Runtime | Docker Compose, file `docker-compose.prod.yml` |
@@ -116,12 +116,28 @@ SQLite tables (`backend/src/db.js`):
 `PRAGMA user_version` holds the schema version. When `SCHEMA_VERSION` in `db.js` is higher than the
 database's, the backend **drops all tables and starts empty** on its next start (that's how prototype-1
 data was truncated on 2026-10-30; v3 wiped prototype-2 data on 2026-10-31 when the empty-room calibration
-columns were removed). Only bump it when you mean to wipe production. A wipe also deletes the units'
+columns were removed; v4 wiped everything on 2026-11-01 for a from-scratch connectivity test). Only bump it when you mean to wipe production. A wipe also deletes the units'
 identities, so every unit has to be re-registered and re-flashed with `tools/flash-device.sh`.
 
 Device protocol over MQTT (see `backend/src/mqtt.js`): commands `output_set` (green/yellow/red/buzzer),
-`alert_mode_set`, `alarm_stop`, `radar_config` (range, no-person delay, sensitivity, close-range threshold);
-units publish retained `state` and `sensor_trigger`/`heartbeat`/`radar_info` events.
+`alert_mode_set`, `alarm_stop`, `radar_config` (range, no-person delay, sensitivity, close-range threshold),
+`ping`; units publish retained `state` and `sensor_trigger`/`heartbeat`/`radar_info` events.
+
+**Online / offline.** Every 15 s the backend sends `ping` to each claimed unit, and the unit answers with a
+`heartbeat` event (it also sends one every 30 s on its own). Any live (non-retained) message from a unit
+refreshes `devices.last_seen`; a unit not heard from for 45 s (`OFFLINE_AFTER_MS` in `device-view.js`) is
+`online: false` in the API and the app gets a `device_status` push when that changes (checked every 5 s).
+Retained state replayed by the broker doesn't count as live. Commands to an offline unit get HTTP 409
+(`alarm/stop` is still allowed), and presence/alarm/target are reported as clear/none while it's offline.
+A unit that loses WiFi retries the saved network every 20 s indefinitely and comes back online by itself.
+A unit that can't reach the broker backs off its retries (3 s up to 30 s) and each attempt blocks it for at most 4 s,
+so its radar and local alarm keep working with the internet down. A unit that couldn't claim itself (server
+unreachable) keeps retrying every 30 s instead of waiting for a power cycle.
+
+**App live connection.** The WebSocket (`/ws`) gets a `{"type":"hb"}` message and a protocol ping every 20 s; sockets
+that don't answer the ping are terminated. The app reconnects when it hears nothing for 60 s, so a connection that
+died silently (phone changed network, NAT timeout) can't hide alarms. The broker replaying a unit's *retained* state
+(after a backend restart) updates the database but is not pushed to the app.
 
 ## Server hardening already in place
 
