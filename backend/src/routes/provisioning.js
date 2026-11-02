@@ -2,6 +2,8 @@ import { Router } from "express";
 import db, { nextDefaultDeviceName } from "../db.js";
 import { toPublicDevice } from "../device-view.js";
 import { pushToUser } from "../ws.js";
+import { sendSchedule } from "../mqtt.js";
+import { settingsOf } from "../user-view.js";
 
 const router = Router();
 
@@ -60,6 +62,7 @@ router.post("/claim-device", (req, res) => {
   db.prepare(
     "UPDATE devices SET status = 'claimed', owner_user_id = ?, name = ?, wifi_ssid = ?, last_seen = datetime('now'), reset_pending = 0 WHERE device_id = ?"
   ).run(owner_user_id, nextDefaultDeviceName(owner_user_id), wifiSsid, device.device_id);
+  sendSchedule(device.device_id, settingsOf(owner).alarm_schedule); // the new owner's night alarm
   res.json(toPublicDevice(db.prepare("SELECT * FROM devices WHERE device_id = ?").get(device.device_id)));
 });
 
@@ -86,7 +89,7 @@ router.post("/reset-device", (req, res) => {
     db.prepare(
       `UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, wifi_ssid = NULL,
          last_seen = NULL, alert_mode_active = 0, relay1_state = 0, relay2_state = 0, alarm_state = 0,
-         presence = 0, rssi = NULL, alarm_name = NULL, relay1_name = NULL, relay2_name = NULL,
+         presence = 0, schedule_active = 0, rssi = NULL, alarm_name = NULL, relay1_name = NULL, relay2_name = NULL,
          reset_pending = 0
        WHERE device_id = ?`
     ).run(device.device_id);

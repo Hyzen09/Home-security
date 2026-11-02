@@ -120,6 +120,8 @@ renameColumnIfPresent("devices", "red_state", "relay2_state");
 for (const column of ["green_state", "buzzer_state"]) dropColumnIfPresent("devices", column);
 addColumnIfMissing("devices", "rssi", "INTEGER");
 for (const column of ["alarm_name", "relay1_name", "relay2_name"]) addColumnIfMissing("devices", column, "TEXT");
+// Set while the owner's night alarm arms the unit (reported by the unit).
+addColumnIfMissing("devices", "schedule_active", "INTEGER NOT NULL DEFAULT 0");
 
 export function nextDefaultDeviceName(ownerUserId) {
   const taken = new Set(

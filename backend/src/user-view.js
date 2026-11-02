@@ -1,13 +1,27 @@
 import db from "./db.js";
 
-export const DEFAULT_SETTINGS = { alert_tone: "siren" };
+// The night alarm: while a unit's alarm switch is off, the unit arms itself every day
+// from start_min to end_min (minutes after local midnight; may cross midnight).
+// tz_offset_min is the owner's phone's UTC offset, since the unit only knows UTC (NTP).
+export const DEFAULT_SCHEDULE = { enabled: true, start_min: 22 * 60, end_min: 7 * 60, tz_offset_min: 330 };
+export const DEFAULT_SETTINGS = { alert_tone: "siren", alarm_schedule: DEFAULT_SCHEDULE };
 
 export function settingsOf(user) {
+  let saved = {};
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(user.settings || "{}") };
+    saved = JSON.parse(user?.settings || "{}");
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    // corrupt settings: defaults
   }
+  return { ...DEFAULT_SETTINGS, ...saved, alarm_schedule: { ...DEFAULT_SCHEDULE, ...saved.alarm_schedule } };
+}
+
+// The night alarm of a unit's owner (the default for a unit nobody owns yet).
+export function scheduleForDevice(deviceId) {
+  const owner = db
+    .prepare("SELECT u.settings FROM devices d JOIN users u ON u.id = d.owner_user_id WHERE d.device_id = ?")
+    .get(deviceId);
+  return settingsOf(owner).alarm_schedule;
 }
 
 // Keeps a leading "+" and digits only, so "+91 98765-43210" and

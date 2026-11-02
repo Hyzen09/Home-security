@@ -2,6 +2,7 @@ import mqtt from "mqtt";
 import db from "./db.js";
 import { pushToUser } from "./ws.js";
 import { isOnline } from "./device-view.js";
+import { scheduleForDevice } from "./user-view.js";
 
 const BROKER_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 
@@ -10,8 +11,11 @@ const BROKER_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 //                             {type:"alert_mode_set", active}
 //                             {type:"alarm_stop"}  (silence; stays armed)
 //                             {type:"ping"}  (every 5 s; the unit answers with a heartbeat event)
+//                             {type:"schedule_set", enabled, start_min, end_min, tz_offset_min}
+//                               (the owner's night alarm; sent whenever the unit comes online and on change)
 //                             {type:"sync"}  (the unit was removed in the app: it asks POST /provisioning/status and resets)
-//   devices/{id}/state     -> {relay1, relay2, alarm, presence, alert_mode_active, uptime_ms} (retained)
+//   devices/{id}/state     -> {relay1, relay2, alarm, presence, alert_mode_active (the alarm switch),
+//                              schedule_active (the night alarm is arming it now), uptime_ms} (retained)
 //   devices/{id}/events    -> {type:"sensor_trigger"} on each new presence detection,
 //                             {type:"heartbeat", rssi} (answers each ping; rssi = WiFi signal, dBm)
 
@@ -51,6 +55,8 @@ const lastOnline = new Map(); // device_id -> the online value the app was last 
 function noteOnline(deviceId, online) {
   if (lastOnline.get(deviceId) === online) return;
   lastOnline.set(deviceId, online);
+  // Back online (or first heard since a backend restart): make sure it has the owner's night alarm.
+  if (online) sendSchedule(deviceId, scheduleForDevice(deviceId));
   const row = db.prepare("SELECT owner_user_id, last_seen FROM devices WHERE device_id = ?").get(deviceId);
   console.log(`[mqtt] ${deviceId} is ${online ? "online" : "offline"}`);
   if (row?.owner_user_id) {
@@ -103,7 +109,7 @@ client.on("message", (topic, payloadBuf, packet) => {
   if (topic.endsWith("/events") && msg.type === "sensor_trigger") {
     // The unit decides the alarm itself when armed (and its state push rings the
     // phone); the cloud's job here is logging + notification.
-    const alertActive = !!device.alert_mode_active;
+    const alertActive = !!device.alert_mode_active || !!device.schedule_active;
     db.prepare("INSERT INTO sensor_events (device_id, alert_mode_active) VALUES (?, ?)").run(deviceId, bit(alertActive));
     console.log(`[mqtt] sensor_trigger device=${deviceId} alert_mode_active=${alertActive}`);
 
@@ -120,7 +126,8 @@ client.on("message", (topic, payloadBuf, packet) => {
 
   if (topic.endsWith("/state")) {
     db.prepare(
-      `UPDATE devices SET relay1_state = ?, relay2_state = ?, alarm_state = ?, presence = ?, alert_mode_active = ?
+      `UPDATE devices SET relay1_state = ?, relay2_state = ?, alarm_state = ?, presence = ?, alert_mode_active = ?,
+         schedule_active = ?
        WHERE device_id = ?`
     ).run(
       bit(msg.relay1),
@@ -128,6 +135,7 @@ client.on("message", (topic, payloadBuf, packet) => {
       bit(msg.alarm),
       bit(msg.presence),
       bit(msg.alert_mode_active),
+      bit(msg.schedule_active),
       deviceId
     );
 
@@ -144,6 +152,7 @@ client.on("message", (topic, payloadBuf, packet) => {
         alarm: !!msg.alarm,
         presence: !!msg.presence,
         alert_mode_active: !!msg.alert_mode_active,
+        schedule_active: !!msg.schedule_active,
       });
     }
   }
@@ -178,6 +187,11 @@ export function sendCommand(deviceId, command) {
 
 export function setAlertMode(deviceId, active) {
   sendCommand(deviceId, { type: "alert_mode_set", active });
+}
+
+export function sendSchedule(deviceId, schedule) {
+  const { enabled, start_min, end_min, tz_offset_min } = schedule;
+  sendCommand(deviceId, { type: "schedule_set", enabled, start_min, end_min, tz_offset_min });
 }
 
 export function stopAlarm(deviceId) {

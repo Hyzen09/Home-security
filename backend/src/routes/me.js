@@ -1,6 +1,7 @@
 import { Router } from "express";
 import db from "../db.js";
 import { settingsOf, toProfile } from "../user-view.js";
+import { sendSchedule } from "../mqtt.js";
 
 const router = Router();
 
@@ -10,9 +11,12 @@ router.get("/", (req, res) => {
 
 // Tone ids are only format-checked, not allowlisted, so new tones can ship
 // in the app without a backend deploy; the app falls back on unknown ids.
+const MINUTES_PER_DAY = 24 * 60;
+const isMinute = (v) => Number.isInteger(v) && v >= 0 && v < MINUTES_PER_DAY;
+
 router.patch("/settings", (req, res) => {
   const settings = settingsOf(req.user);
-  const { alert_tone } = req.body || {};
+  const { alert_tone, alarm_schedule } = req.body || {};
 
   if (alert_tone !== undefined) {
     if (typeof alert_tone !== "string" || !/^[a-z0-9_-]{1,32}$/.test(alert_tone)) {
@@ -21,7 +25,41 @@ router.patch("/settings", (req, res) => {
     settings.alert_tone = alert_tone;
   }
 
+  // Any of {enabled, start_min, end_min, tz_offset_min}; the rest stays as it was.
+  if (alarm_schedule !== undefined) {
+    if (typeof alarm_schedule !== "object" || alarm_schedule === null) {
+      return res.status(400).json({ error: "alarm_schedule must be an object" });
+    }
+    const next = { ...settings.alarm_schedule };
+    const { enabled, start_min, end_min, tz_offset_min } = alarm_schedule;
+    if (enabled !== undefined) {
+      if (typeof enabled !== "boolean") return res.status(400).json({ error: "enabled must be true or false" });
+      next.enabled = enabled;
+    }
+    for (const [key, value] of [["start_min", start_min], ["end_min", end_min]]) {
+      if (value === undefined) continue;
+      if (!isMinute(value)) return res.status(400).json({ error: `${key} must be minutes after midnight (0–1439)` });
+      next[key] = value;
+    }
+    if (tz_offset_min !== undefined) {
+      if (!Number.isInteger(tz_offset_min) || tz_offset_min < -12 * 60 || tz_offset_min > 14 * 60) {
+        return res.status(400).json({ error: "tz_offset_min must be a UTC offset in minutes" });
+      }
+      next.tz_offset_min = tz_offset_min;
+    }
+    if (next.start_min === next.end_min) {
+      return res.status(400).json({ error: "The night alarm must start and end at different times" });
+    }
+    settings.alarm_schedule = next;
+  }
+
   db.prepare("UPDATE users SET settings = ? WHERE id = ?").run(JSON.stringify(settings), req.user.id);
+  if (alarm_schedule !== undefined) {
+    // Units that are offline get it when they next come online (mqtt.js).
+    for (const { device_id } of db.prepare("SELECT device_id FROM devices WHERE owner_user_id = ?").all(req.user.id)) {
+      sendSchedule(device_id, settings.alarm_schedule);
+    }
+  }
   res.json(settings);
 });
 

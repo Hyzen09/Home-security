@@ -39,6 +39,8 @@ export function toPublicDevice(row) {
     rssi: online ? row.rssi : null,
     // What the radar sees is only meaningful while the unit is reachable; for a
     // unit that went quiet mid-alarm it would otherwise stay "sounding" forever.
+    // Armed by the owner's night alarm right now (alert_mode_active is the switch itself).
+    schedule_active: online && !!row.schedule_active,
     alarm: online && !!row.alarm_state,
     presence: online && !!row.presence,
   };

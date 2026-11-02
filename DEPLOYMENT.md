@@ -114,12 +114,13 @@ lives in a Docker volume, but it is lost if the volume or the instance is delete
 ## Database (schema v4, prototype 2)
 
 SQLite tables (`backend/src/db.js`):
-- `users` — name, unique phone, `settings` JSON (`alert_tone`)
+- `users` — name, unique phone, `settings` JSON (`alert_tone`, `alarm_schedule` = the night alarm; defaults in `user-view.js`)
 - `sessions` — SHA-256 of each random bearer token → user (logout deletes; no expiry yet)
 - `wifi_networks` — the account's saved WiFi networks (SSID + password, plain text), unique per user
 - `devices` — unit identity/secret, owner, name, the owner's `alarm_name`/`relay1_name`/`relay2_name` (NULL = the
   app's default), `wifi_ssid` it claimed on, `rssi` (last reported WiFi signal, dBm), and live state:
-  `relay1_state`/`relay2_state`, `alarm_state`, `presence`, `alert_mode_active`,
+  `relay1_state`/`relay2_state`, `alarm_state`, `presence`, `alert_mode_active` (the alarm switch), `schedule_active`
+  (the night alarm is arming it now),
   and `reset_pending` (set when the owner removes the unit in the app, cleared when it resets itself or is
   claimed again). Column changes run at startup on an existing database without losing rows: the old radar columns
   (`radar_ok`, `target_cm`, `radar_settings`) are dropped; when the traffic light + buzzer became two relays (2026-11-02)
@@ -141,7 +142,8 @@ There is no TLS, so the password and the data (including saved WiFi passwords) c
 use a long password, and don't open the page on a network you don't trust.
 
 Device protocol over MQTT (see `backend/src/mqtt.js`): commands `output_set` (`relay1`/`relay2`),
-`alert_mode_set`, `alarm_stop`, `ping`, `sync`; units publish retained `state` and `sensor_trigger`/`heartbeat` events
+`alert_mode_set`, `schedule_set` (the owner's night alarm, sent when a unit comes online, is claimed, or the owner changes it),
+`alarm_stop`, `ping`, `sync`; units publish retained `state` and `sensor_trigger`/`heartbeat` events
 (the heartbeat carries `rssi`, saved and pushed to the app as `device_rssi` when it changes).
 
 **Online / offline.** Every 5 s the backend sends `ping` to each claimed unit, and the unit answers with a

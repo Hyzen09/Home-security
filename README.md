@@ -6,7 +6,8 @@
 A home-security prototype. Each **unit** is an ESP32 with a 24 GHz radar (detects whether someone is in the room) and two
 relays. An **Android app** shows every unit live with its WiFi signal strength, switches its two relays, and arms an *alarm*
 that rings the phone the instant the radar sees someone new, even when the app is closed. The alarm and both relays can be
-renamed in the app. The unit's remaining pins run the customer's own code. A **cloud backend** (Node.js +
+renamed in the app. The alarm is on by default; when it is switched off, a **night alarm** arms the unit anyway every day
+(10 PM–7 AM by default, adjustable in the app's Settings). The unit's remaining pins run the customer's own code. A **cloud backend** (Node.js +
 Mosquitto on AWS EC2) sits between them so it works from anywhere, with the app on mobile data and the unit behind a home router.
 
 > **Repo scope:** this repository tracks only the **server-side** code — `backend/`, `mosquitto/`, the compose files and the
@@ -89,7 +90,8 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 | Unit WiFi retry (after it has joined once) | every 20 s, forever |
 | Unit MQTT retry | 3 s, doubling to 30 s; each attempt blocks the unit for at most 4 s |
 | Unit claim retry | every 5 s five times, then every 30 s, forever |
-| Alarm | new presence while armed → on immediately; off 5 s after presence clears, on disarm, or on Stop |
+| Alarm | new presence while armed → on immediately; off 5 s after presence clears, on switching it off, or on Stop |
+| Armed | the alarm switch (on for a new unit) **or** the night alarm window (default 22:00–07:00, owner's time zone); the unit keeps the window in NVS and the time from NTP, checked every second |
 | Signal strength in the app | Excellent ≥ −55 dBm · Good ≥ −67 · Fair ≥ −75 · Weak ≥ −85 · Very weak below |
 | App background service | rings with the app closed; restarts after a reboot or app update; reconnects 2 s → 30 s backoff |
 | Setup-mode WiFi scan (for the app's "can the unit see this network" check) | every 5 minutes, only while nobody is connected |
@@ -113,7 +115,7 @@ retrying and its alarm and custom code keep working locally) — see "What's ver
 |---|---|---|
 | `GET /health` | — | `{ok, mqtt}` — `mqtt` is the backend's own link to the broker |
 | `POST /auth/register` · `/auth/login` · `/auth/logout` | — / Bearer | name + phone (**no OTP**) → token |
-| `GET /me` · `PATCH /me/settings` | Bearer | profile, alert tone |
+| `GET /me` · `PATCH /me/settings` | Bearer | profile, `alert_tone`, `alarm_schedule {enabled, start_min, end_min, tz_offset_min}` (sent to every unit) |
 | `GET/POST /me/wifi-networks` · `PATCH/DELETE /me/wifi-networks/:id` | Bearer | saved 2.4 GHz networks (8–63 char password, or empty) |
 | `GET /devices` · `GET /devices/:id` | Bearer | list, one unit (with `online`, `rssi`, `relay1`/`relay2`, names) |
 | `PATCH /devices/:id` | Bearer | rename: any of `name` (1–40), `alarm_name`, `relay1_name`, `relay2_name` (≤ 24; empty = default) |
@@ -128,8 +130,8 @@ retrying and its alarm and custom code keep working locally) — see "What's ver
 
 **Unit local HTTP** (setup hotspot only, `192.168.4.1`): `GET /info`, `POST /provision {ssid, password, owner_user_id}`.
 
-**MQTT** (`devices/<id>/…`): `commands` ← `output_set`, `alert_mode_set`, `alarm_stop`, `ping`, `sync` ·
-`state` (retained) → relay1/relay2/alarm/presence/alert_mode_active · `events` → `sensor_trigger`, `heartbeat {rssi}`.
+**MQTT** (`devices/<id>/…`): `commands` ← `output_set`, `alert_mode_set`, `schedule_set`, `alarm_stop`, `ping`, `sync` ·
+`state` (retained) → relay1/relay2/alarm/presence/alert_mode_active/schedule_active · `events` → `sensor_trigger`, `heartbeat {rssi}`.
 
 **WebSocket** (`/ws?token=…`): `device_state`, `device_status`, `device_rssi`, `sensor_event`, `device_removed`, `hb`.
 
@@ -319,7 +321,8 @@ offline, a wrong WiFi password reaching the unit, a 5 GHz-only network, and any 
   expire; **no TLS** on HTTP, MQTT or WebSocket; saved WiFi passwords are **plain text** in SQLite and travel over HTTP; the broker is
   **anonymous and public**, so anyone who knows a `device_id` can publish control commands (identity/reset changes are protected,
   control is not); no database backups; single instance.
-- **No schedule:** alert mode is armed and disarmed manually (it survives a power cut); there is no timed alert window yet.
+- **Night alarm needs the clock:** the unit learns the time from NTP after it joins WiFi; after a power cut with no internet it
+  can't tell night from day, so only the alarm switch arms it until the clock is set. One window per account, applied to all units.
 - **iOS:** Add Device cannot work on iOS (Apple gives apps no WiFi scanning); the iOS build is unverified.
 - **No OTA firmware updates.** Push is a WebSocket held by the app's foreground service (no FCM), so it keeps working with the
   app closed, but a phone maker's aggressive battery saver (some Xiaomi/Oppo/Vivo builds) can still kill it; the Pixel doesn't.
