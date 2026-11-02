@@ -25,6 +25,7 @@ tools/qr-*.png
 /app/
 /firmware/
 /firmware-esp8266-bench/
+/firmware-esp12/
 /tools/
 /simulator/
 /Documentation.html

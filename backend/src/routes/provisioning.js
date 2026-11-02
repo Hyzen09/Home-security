@@ -40,6 +40,13 @@ router.post("/claim-device", (req, res) => {
   const { owner_user_id } = req.body;
   if (!owner_user_id) return res.status(400).json({ error: "owner_user_id required" });
   const wifiSsid = typeof req.body.wifi_ssid === "string" ? req.body.wifi_ssid.slice(0, 32) : null;
+  // Optional: the pins the unit's relays are on, used as their default names in the app.
+  const pinName = (v) => (typeof v === "string" && /^[A-Za-z0-9]{1,8}$/.test(v) ? v : null);
+  const relayPins = [pinName(req.body.relay1_pin), pinName(req.body.relay2_pin)];
+  const saveRelayPins = () =>
+    db
+      .prepare("UPDATE devices SET relay1_pin = coalesce(?, relay1_pin), relay2_pin = coalesce(?, relay2_pin) WHERE device_id = ?")
+      .run(relayPins[0], relayPins[1], device.device_id);
 
   const owner = db.prepare("SELECT * FROM users WHERE id = ?").get(owner_user_id);
   if (!owner) return res.status(404).json({ error: "unknown owner_user_id" });
@@ -53,6 +60,7 @@ router.post("/claim-device", (req, res) => {
         wifiSsid,
         device.device_id
       );
+      saveRelayPins();
       return res.json(toPublicDevice(db.prepare("SELECT * FROM devices WHERE device_id = ?").get(device.device_id)));
     }
     return res.status(409).json({ error: "device already claimed by another account" });
@@ -62,6 +70,7 @@ router.post("/claim-device", (req, res) => {
   db.prepare(
     "UPDATE devices SET status = 'claimed', owner_user_id = ?, name = ?, wifi_ssid = ?, last_seen = datetime('now'), reset_pending = 0 WHERE device_id = ?"
   ).run(owner_user_id, nextDefaultDeviceName(owner_user_id), wifiSsid, device.device_id);
+  saveRelayPins();
   sendSchedule(device.device_id, settingsOf(owner).alarm_schedule); // the new owner's night alarm
   res.json(toPublicDevice(db.prepare("SELECT * FROM devices WHERE device_id = ?").get(device.device_id)));
 });

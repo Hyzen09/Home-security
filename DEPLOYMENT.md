@@ -118,7 +118,8 @@ SQLite tables (`backend/src/db.js`):
 - `sessions` — SHA-256 of each random bearer token → user (logout deletes; no expiry yet)
 - `wifi_networks` — the account's saved WiFi networks (SSID + password, plain text), unique per user
 - `devices` — unit identity/secret, owner, name, the owner's `relay1_name`/`relay2_name` (NULL = the app's default,
-  the pin name), `wifi_ssid` it claimed on, `rssi` (last reported WiFi signal, dBm), and live state:
+  the pin name), `relay1_pin`/`relay2_pin` (pin names an ESP-12F unit reports when it claims itself, e.g. D2/D3; shown
+  as the relay names until renamed), `wifi_ssid` it claimed on, `rssi` (last reported WiFi signal, dBm), and live state:
   `relay1_state`/`relay2_state`, `alarm_state`, `presence`, `alert_mode_active` (the alarm switch), `schedule_active`
   (the night schedule is arming it now),
   and `reset_pending` (set when the owner removes the unit in the app, cleared when it resets itself or is

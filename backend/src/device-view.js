@@ -30,8 +30,9 @@ export function toPublicDevice(row) {
     last_seen: row.last_seen,
     online,
     alert_mode_active: !!row.alert_mode_active,
-    relay1_name: row.relay1_name,
-    relay2_name: row.relay2_name,
+    // The owner's name, else the unit's pin name (ESP-12F), else null (the app's default).
+    relay1_name: row.relay1_name ?? row.relay1_pin ?? null,
+    relay2_name: row.relay2_name ?? row.relay2_pin ?? null,
     relay1: !!row.relay1_state,
     relay2: !!row.relay2_state,
     // WiFi signal strength in dBm, refreshed by every heartbeat (about every 5 s).

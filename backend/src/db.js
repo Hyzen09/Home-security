@@ -121,6 +121,10 @@ for (const column of ["green_state", "buzzer_state"]) dropColumnIfPresent("devic
 addColumnIfMissing("devices", "rssi", "INTEGER");
 for (const column of ["relay1_name", "relay2_name"]) addColumnIfMissing("devices", column, "TEXT");
 dropColumnIfPresent("devices", "alarm_name"); // briefly added 2026-11-02, then dropped: the alarm isn't renamed
+// The pins the unit's relays are on, reported when it claims itself (e.g. "D2", "D3" on an
+// ESP-12F unit); the app shows them as the relays' names until the owner renames them.
+// NULL = a unit that doesn't report them (the ESP32 firmware): the app's default, D19/D21.
+for (const column of ["relay1_pin", "relay2_pin"]) addColumnIfMissing("devices", column, "TEXT");
 // Set while the owner's night alarm arms the unit (reported by the unit).
 addColumnIfMissing("devices", "schedule_active", "INTEGER NOT NULL DEFAULT 0");
 
