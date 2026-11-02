@@ -1,7 +1,7 @@
 # Home Security — IoT prototype
 
 **Android app:** [download the latest APK](https://github.com/Hyzen09/Home-security/releases/latest/download/home-security.apk)
-(v2.2.0; all versions on the [Releases](https://github.com/Hyzen09/Home-security/releases) page).
+(v2.4.0; all versions on the [Releases](https://github.com/Hyzen09/Home-security/releases) page).
 
 A home-security prototype. Each **unit** is an ESP32 with a 24 GHz radar (detects whether someone is in the room) and two
 relays. An **Android app** shows every unit live with its WiFi signal strength, switches its two relays (named after their
@@ -293,7 +293,24 @@ DEVICE_ID=<device_id> DEVICE_SECRET=<device_secret> OWNER_USER_ID=<your app user
 
 ## What's verified (prototype 2)
 
-Last full run: **2026-11-01**, against the **production** backend on EC2, a real ESP32 unit, a real Pixel phone and Chrome.
+**2026-11-02** (app v2.4.0, firmware 0.4.0-custom), against **production**, a real ESP32 flashed with `tools/esp-install.sh
+--reflash` and the Pixel over USB:
+- Relays: D19 switched from the phone and confirmed by the unit (still on after an app restart, so the server state came from the
+  unit). Renaming a relay by long-press saved to the account; clearing the name went back to "D19".
+- Live signal strength on the card, moving between −55 and −69 dBm as it updated.
+- Night schedule: a start time changed in Settings reached the unit (`[schedule] night alarm on, 17:00-07:00`), the unit armed
+  itself (`window started: armed`) and the card showed "Off, but on by the night schedule"; after a reboot it re-armed once NTP
+  had set the clock (about 30 s).
+- App swiped away from recents: the background service kept running, an alarm rang the phone (`USAGE_ALARM`) with the "Alarm:
+  Device 1" notification about 2 s after the alarm state was sent, and its Stop button silenced it. After an app update the
+  service restarted without the app being opened.
+- The release APK (release key, shrunk) logged in and its background connection came up on an emulator.
+- Backend: an old production-shaped database migrated in place (yellow/red → relay1/relay2), plus API checks for relays, names,
+  RSSI pushes and the night schedule (34 checks, throwaway database).
+- Found and fixed: with no debounce, a flickering D4 (switch bounce / loose wire) produced ~100 detections in a second; D4 now has
+  to hold a level for 100 ms.
+
+**2026-11-01**, against the **production** backend on EC2, a real ESP32 unit, a real Pixel phone and Chrome:
 
 **On real hardware / production**
 - Fresh start: database wiped (schema v4) → test account created in the app (Chrome) → `tools/flash-device.sh` registers, erases and

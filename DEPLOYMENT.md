@@ -235,7 +235,8 @@ Checks: version matches `pubspec.yaml`; not debuggable; signature and zipalign v
 `13.206.228.27:4000` and no `192.168.x.x` / `127.0.0.1` / `localhost` / `10.0.2.2` backend address**. `--publish` creates the
 release with the asset named `home-security.apk` (this keeps the permanent link above working) and then compares GitHub's stored
 SHA-256 with the local build. A debug-signed APK needs `--allow-debug-signing` to be published, so it is a conscious choice.
-Current published release: **app-v2.2.0** (a release-signed v2.3.0 was published and then deleted again on 2026-11-01).
+Current published release: **app-v2.4.0** (2026-11-02, release-signed; a release-signed v2.3.0 was published and then deleted
+again on 2026-11-01, and v2.2.0 and older are debug-signed, so updating from them needs one uninstall).
 
 Manual equivalent (what the script automates): `flutter build apk --release --dart-define=BACKEND_HOST=13.206.228.27`, then
 `gh release create app-vX.Y.Z home-security.apk --repo Hyzen09/Home-security --target main --notes-file notes.md`, then
