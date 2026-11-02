@@ -5,7 +5,7 @@
 
 A home-security prototype. Each **unit** is an ESP32 with a 24 GHz radar (detects whether someone is in the room), a
 traffic light and a buzzer. An **Android app** shows every unit live, switches its lamps and buzzer, arms an *alert mode*
-(the unit sounds its own buzzer the instant the radar sees someone new) and tunes the radar. A **cloud backend** (Node.js +
+(the unit sounds its own buzzer the instant the radar sees someone new). A **cloud backend** (Node.js +
 Mosquitto on AWS EC2) sits between them so it works from anywhere, with the app on mobile data and the unit behind a home router.
 
 > **Repo scope:** this repository tracks only the **server-side** code — `backend/`, `mosquitto/`, the compose files and the
@@ -52,10 +52,10 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 
 | Part | Where | What it does |
 |---|---|---|
-| Security unit | `firmware/` (local) | ESP32 DevKit, Arduino/PlatformIO. Radar on D4 (+ UART D25/D26 for settings), traffic light D18/D19/D21, buzzer D22, BOOT button. Runs the local alarm, MQTT, and the setup hotspot |
+| Security unit | `firmware/` (local) | ESP32 DevKit, Arduino/PlatformIO. Radar OT2 on D4 (a plain HIGH/LOW pin), traffic light D18/D19/D21, buzzer D22, BOOT button. Runs the local alarm, MQTT, and the setup hotspot |
 | Backend | `backend/` | Express REST API, MQTT bridge, WebSocket push, SQLite. Online/offline tracking, saved WiFi networks, unit registry |
 | MQTT broker | `mosquitto/` | Eclipse Mosquitto 2 carrying `devices/<id>/commands · state · events` |
-| Android app | `app/` (local), APK on Releases | Flutter. Login, saved WiFi, dashboard, Add Device, radar settings, alarm tone/notification, background monitor |
+| Android app | `app/` (local), APK on Releases | Flutter. Login, saved WiFi, dashboard, Add Device, alarm tone/notification, background monitor |
 | Flash tool | `tools/flash-device.sh` (local) | Registers a new unit, burns its identity, erases and flashes the board, checks it boots |
 | Hosting / CI | `docker-compose.prod.yml`, `.github/workflows/deploy.yml` | Push to `main` → GitHub Actions → SSH → rebuild on EC2 |
 
@@ -67,7 +67,7 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 - **Control.** App `PATCH /devices/:id/outputs/green` → backend publishes `output_set` → unit switches the pin and publishes its
   retained `state` → backend stores it and pushes `device_state` over the WebSocket (≈0.3 s round trip). Commands to an
   offline unit are refused with HTTP 409.
-- **Alarm.** Radar presence goes high (stable 200 ms) while armed → buzzer on **immediately, on the unit** → `sensor_trigger` +
+- **Alarm.** Radar OT2 goes HIGH while armed → buzzer on **immediately, on the unit** → `sensor_trigger` +
   state published → the app plays its alarm tone and shows a notification with Stop → Stop silences it, the unit stays armed.
 - **Online / offline.** Backend pings every unit every 5 s, the unit answers with a heartbeat; 15 s of silence = Offline
   (pushed to the app). Measured on hardware with the power cut: Offline after 13 s, Online again 4 s after power returned.
@@ -112,26 +112,24 @@ retrying and the alarm keeps working locally) — see "What's verified" for whic
 | `GET /devices` · `GET /devices/:id` · `PATCH /devices/:id` | Bearer | list, one unit (with `online`), rename |
 | `PATCH /devices/:id/outputs/:output` | Bearer | `green` `yellow` `red` `buzzer` — 409 if offline |
 | `PATCH /devices/:id/alert-mode` | Bearer | arm / disarm — 409 if offline |
-| `PATCH /devices/:id/radar` | Bearer | range, delay, sensitivity, close-range threshold |
 | `POST /devices/:id/alarm/stop` | Bearer | silence, stay armed |
 | `GET /devices/:id/events` | Bearer | recent detections |
 | `DELETE /devices/:id` | Bearer | unclaim **and reset the unit** |
+| `GET /admin` (page) · `/admin/api/*` | `ADMIN_USER` / `ADMIN_PASSWORD` login | database admin: view, add, edit, delete rows in every table; disabled unless both are set in `.env` |
 | `POST /manufacturing/register-device` | `X-Manufacturing-Key` | new unit → `{device_id, device_secret}` |
 | `POST /provisioning/claim-device` · `/status` · `/reset-device` | `device_secret` | called by the unit itself |
 
 **Unit local HTTP** (setup hotspot only, `192.168.4.1`): `GET /info`, `POST /provision {ssid, password, owner_user_id}`.
 
-**MQTT** (`devices/<id>/…`): `commands` ← `output_set`, `alert_mode_set`, `alarm_stop`, `radar_config`, `ping`, `sync` ·
-`state` (retained) → green/yellow/red/buzzer/alarm/presence/alert_mode_active/radar_ok/target_cm · `events` → `sensor_trigger`,
-`heartbeat`, `radar_info`, `radar_config_result`.
+**MQTT** (`devices/<id>/…`): `commands` ← `output_set`, `alert_mode_set`, `alarm_stop`, `ping`, `sync` ·
+`state` (retained) → green/yellow/red/buzzer/alarm/presence/alert_mode_active · `events` → `sensor_trigger`, `heartbeat`.
 
-**WebSocket** (`/ws?token=…`): `device_state`, `device_status`, `sensor_event`, `radar_info`, `radar_config_result`,
-`device_removed`, `hb`.
+**WebSocket** (`/ws?token=…`): `device_state`, `device_status`, `sensor_event`, `device_removed`, `hb`.
 
 ## Data model (schema v4)
 
 `users` (name, unique phone, settings) · `sessions` (SHA-256 of each token) · `wifi_networks` (per user, **password in plain
-text**) · `devices` (id, secret, owner, name, status, `wifi_ssid`, `last_seen`, lamp/buzzer/alarm/presence state, radar settings,
+text**) · `devices` (id, secret, owner, name, status, `wifi_ssid`, `last_seen`, lamp/buzzer/alarm/presence state,
 `reset_pending`) · `sensor_events`. `PRAGMA user_version` holds the schema version; **bumping `SCHEMA_VERSION` in `db.js`
 drops every table** (the documented way to wipe production — all units must then be re-flashed). Details in
 [DEPLOYMENT.md](DEPLOYMENT.md).
@@ -164,14 +162,12 @@ firmware/.pio-venv/bin/pip install platformio
 | Part | ESP32 pin | Notes |
 |---|---|---|
 | Radar VCC / GND | 3V3 / GND | Ai-Thinker Rd-03L_V2 |
-| Radar OT2 | D4 (GPIO4) | digital output, HIGH while it sees someone |
-| Radar TXD (OT1) → ESP32 | D26 | the firmware also accepts TX on D25 (it tries both pin orders and both 115200/256000 baud and remembers the one that answers) |
-| Radar RXD ← ESP32 | D25 | |
+| Radar OT2 | D4 (GPIO4) | digital output: HIGH while it sees someone, LOW when not. The radar's OT1 and RX pins are not connected |
 | Traffic light green / yellow / red | D18 / D19 / D21 | HIGH = lit |
 | Active buzzer | D22 | HIGH = sounding |
 | BOOT button (on the board) | GPIO0 | hold 5 s = factory reset |
 
-The serial link is only needed for the radar settings in the app; presence detection works from OT2 alone.
+The unit reads that one wire and nothing else from the radar — there is no serial link to it.
 
 ### 3. Run the backend
 
@@ -238,20 +234,14 @@ Status LED on the unit: slow blink = setup hotspot is up, solid = online, **fast
 (see Troubleshooting), off = offline. In the app each unit shows an **Online / Offline** badge: the backend checks
 every unit every 5 s, so an unplugged unit shows Offline within about 15 seconds, and a unit that lost WiFi keeps
 retrying the saved network by itself and goes back to Online once it's in. You can also hold the BOOT button
-for 5 seconds to factory-reset a unit: it forgets its WiFi and owner, returns the radar to its default range
-(8.4 m), delay (30 s) and thresholds, and shows up in setup mode again.
+for 5 seconds to factory-reset a unit: it forgets its WiFi and owner and shows up in setup mode again.
 
-### 6. Tune the radar (in the app, per unit)
+### 6. The radar
 
-| Setting | What it does |
-|---|---|
-| Detection range | ignores anything farther away (0.7 m steps, up to 8.4 m) |
-| Sensitivity | shifts the threshold of every distance zone, −30 to +20 dB. Lower = reacts to weaker movement |
-| Close-range threshold | threshold of the two nearest zones (0–1.4 m) on their own. The radar's own signal can show up there as a constant "someone is there"; raise it until that stops (about 60 dB on the test unit), or lower it to pick up a hand a few centimetres from the sensor. "Default" leaves the radar's own value |
-| No-person delay | how long the area must stay empty before it reports "No one there" (10–120 s) |
-
-**Save to radar** sends the values to the unit, which writes them to the radar's flash. The radar stops
-detecting for a moment while it is being written to.
+The unit treats the radar as a switch: OT2 (D4) HIGH = someone is there, LOW = nobody. Nothing about the radar is
+configured from the app or the firmware; its range, sensitivity and no-person delay are whatever is saved in the
+radar module itself. To watch it, open the serial monitor (115200 baud): the unit prints `[radar] ready, OT2 (D4) reads …`
+once it has warmed up (3 s), then `[radar] PERSON DETECTED (HIGH)` / `[radar] nobody (LOW)` on every change.
 
 ### 7. Build the Android app
 
@@ -284,8 +274,7 @@ DEVICE_ID=<device_id> DEVICE_SECRET=<device_secret> OWNER_USER_ID=<your app user
 | The script refuses `127.0.0.1` | give `--backend-url` the Mac's LAN IP (local backend) or the server's public IP |
 | The app says the unit "hasn't checked in yet" and the unit's light blinks fast | the unit joined your WiFi (so the password is fine) but the server rejected it: unknown device (it was flashed before a database reset or against another backend) or wrong owner. Hold BOOT for 5 s; if it still blinks fast, re-flash it with `tools/flash-device.sh` |
 | A unit's hotspot never appears in the app | it is already set up or offline — hold BOOT for 5 s to reset it; check the 2.4 GHz WiFi rule above |
-| The app says the radar isn't connected | the radar's TXD/RXD wires to D26/D25 (see the wiring table); presence still works from OT2 |
-| The app says someone is there when the room is empty | raise **Close-range threshold** (about 60 dB), then lower the range or raise sensitivity if it persists |
+| The app says someone is there when the room is empty | watch the serial monitor: if `[radar]` prints `PERSON DETECTED (HIGH)` the radar's own OT2 output is HIGH (check what it sees, and that OT2 is wired to D4); the radar's sensitivity lives in the module itself |
 | A flashed unit is rejected after the database was reset | a schema bump (see DEPLOYMENT.md → Database) deletes every registered unit; run `tools/flash-device.sh` again |
 | The app says "No nearby devices found yet" but the unit's light blinks slowly | Android rate-limits the app's WiFi scan. Wait a minute and press Search again |
 | "Couldn't join SECURE-…" while adding a unit | try again — the unit's periodic WiFi scan (every 5 min) can interrupt a phone that is connecting at that moment |

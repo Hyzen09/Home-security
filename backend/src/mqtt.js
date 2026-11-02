@@ -1,22 +1,19 @@
 import mqtt from "mqtt";
 import db from "./db.js";
 import { pushToUser } from "./ws.js";
-import { isOnline, radarSettingsOf, toPublicDevice } from "./device-view.js";
+import { isOnline } from "./device-view.js";
 
 const BROKER_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 
-// Device protocol (firmware/src/main.cpp, simulator/device-sim.js):
+// Device protocol (firmware/src/main.ino, simulator/device-sim.js):
 //   devices/{id}/commands  <- {type:"output_set", output:"green"|"yellow"|"red"|"buzzer", state}
 //                             {type:"alert_mode_set", active}
 //                             {type:"alarm_stop"}  (silence; stays armed)
-//                             {type:"radar_config", max_range_units, no_person_delay_s, sensitivity, near_threshold}
 //                             {type:"ping"}  (every 5 s; the unit answers with a heartbeat event)
 //                             {type:"sync"}  (the unit was removed in the app: it asks POST /provisioning/status and resets)
 //   devices/{id}/state     -> {green, yellow, red, buzzer, alarm, presence, alert_mode_active,
-//                              radar_ok, target_cm, uptime_ms} (retained)
-//   devices/{id}/events    -> {type:"sensor_trigger"} on each new presence detection, {type:"heartbeat"},
-//                             {type:"radar_info", radar_ok, max_range_units, no_person_delay_s, sensitivity, near_threshold},
-//                             {type:"radar_config_result", status, error?}
+//                              uptime_ms} (retained)
+//   devices/{id}/events    -> {type:"sensor_trigger"} on each new presence detection, {type:"heartbeat"}
 
 export const client = mqtt.connect(BROKER_URL, {
   clientId: "cloud-backend-" + Math.random().toString(16).slice(2),
@@ -117,41 +114,10 @@ client.on("message", (topic, payloadBuf, packet) => {
     }
   }
 
-  if (topic.endsWith("/events") && msg.type === "radar_info") {
-    const settings = {
-      ...radarSettingsOf(device),
-      sensitivity: Number.isInteger(msg.sensitivity) ? msg.sensitivity : 0,
-      near_threshold: Number.isInteger(msg.near_threshold) ? msg.near_threshold : 0,
-    };
-    if (msg.radar_ok) {
-      settings.max_range_units = msg.max_range_units;
-      settings.no_person_delay_s = msg.no_person_delay_s;
-    }
-    db.prepare("UPDATE devices SET radar_settings = ?, radar_ok = ? WHERE device_id = ?").run(
-      JSON.stringify(settings),
-      bit(msg.radar_ok),
-      deviceId
-    );
-    const userId = ownerOf(deviceId);
-    if (userId) {
-      const row = db.prepare("SELECT * FROM devices WHERE device_id = ?").get(deviceId);
-      pushToUser(userId, { type: "radar_info", device_id: deviceId, radar: toPublicDevice(row).radar });
-    }
-  }
-
-  if (topic.endsWith("/events") && msg.type === "radar_config_result") {
-    const userId = ownerOf(deviceId);
-    if (userId) {
-      pushToUser(userId, { type: msg.type, device_id: deviceId, status: msg.status, error: msg.error ?? null });
-    }
-  }
-
   if (topic.endsWith("/state")) {
-    const targetCm = Number.isInteger(msg.target_cm) && msg.target_cm >= 0 ? msg.target_cm : null;
     db.prepare(
       `UPDATE devices SET green_state = ?, yellow_state = ?, red_state = ?, buzzer_state = ?,
-         alarm_state = ?, presence = ?, alert_mode_active = ?,
-         radar_ok = ?, target_cm = ?
+         alarm_state = ?, presence = ?, alert_mode_active = ?
        WHERE device_id = ?`
     ).run(
       bit(msg.green),
@@ -161,8 +127,6 @@ client.on("message", (topic, payloadBuf, packet) => {
       bit(msg.alarm),
       bit(msg.presence),
       bit(msg.alert_mode_active),
-      bit(msg.radar_ok),
-      targetCm,
       deviceId
     );
 
@@ -181,8 +145,6 @@ client.on("message", (topic, payloadBuf, packet) => {
         alarm: !!msg.alarm,
         presence: !!msg.presence,
         alert_mode_active: !!msg.alert_mode_active,
-        target_cm: targetCm,
-        radar_connected: !!msg.radar_ok,
       });
     }
   }
@@ -207,10 +169,6 @@ export function sendCommand(deviceId, command) {
 
 export function setAlertMode(deviceId, active) {
   sendCommand(deviceId, { type: "alert_mode_set", active });
-}
-
-export function setRadarConfig(deviceId, { max_range_units, no_person_delay_s, sensitivity, near_threshold }) {
-  sendCommand(deviceId, { type: "radar_config", max_range_units, no_person_delay_s, sensitivity, near_threshold });
 }
 
 export function stopAlarm(deviceId) {

@@ -2,14 +2,11 @@
 // provisioning.js and mqtt.js don't drift out of sync.
 export const OUTPUTS = ["green", "yellow", "red", "buzzer"];
 
-// One radar distance unit = 0.7 m (Rd-03L_V2 protocol).
-export const RADAR_UNIT_M = 0.7;
-
 // A unit counts as online while it has been heard from recently. The backend
 // pings it every 5 s (mqtt.js) and it answers at once, so 15 s of silence is
 // three missed pings in a row: it's unplugged or off WiFi. Lower than that and
-// a slow reply (the unit blocks for a few seconds while it saves radar settings
-// or reconnects) would flip it offline for no reason.
+// a slow reply (the unit blocks for a few seconds while it reconnects) would
+// flip it offline for no reason.
 export const OFFLINE_AFTER_MS = 15_000;
 
 export function isOnline(row, now = Date.now()) {
@@ -18,16 +15,7 @@ export function isOnline(row, now = Date.now()) {
   return now - heardAt < OFFLINE_AFTER_MS;
 }
 
-export function radarSettingsOf(row) {
-  try {
-    return JSON.parse(row.radar_settings || "{}");
-  } catch {
-    return {};
-  }
-}
-
 export function toPublicDevice(row) {
-  const radar = radarSettingsOf(row);
   const online = isOnline(row);
   return {
     device_id: row.device_id,
@@ -46,13 +34,5 @@ export function toPublicDevice(row) {
     // unit that went quiet mid-alarm it would otherwise stay "sounding" forever.
     alarm: online && !!row.alarm_state,
     presence: online && !!row.presence,
-    target_cm: online ? (row.target_cm ?? null) : null,
-    radar: {
-      connected: !!row.radar_ok,
-      max_range_units: radar.max_range_units ?? null,
-      no_person_delay_s: radar.no_person_delay_s ?? null,
-      sensitivity: radar.sensitivity ?? 0,
-      near_threshold: radar.near_threshold ?? 0,
-    },
   };
 }

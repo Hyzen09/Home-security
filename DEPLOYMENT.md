@@ -119,9 +119,9 @@ SQLite tables (`backend/src/db.js`):
 - `wifi_networks` — the account's saved WiFi networks (SSID + password, plain text), unique per user
 - `devices` — unit identity/secret, owner, name, `wifi_ssid` it claimed on, and live state:
   `green_state`/`yellow_state`/`red_state`/`buzzer_state`, `alarm_state`, `presence`, `alert_mode_active`,
-  `radar_ok`, `target_cm`, and `radar_settings` JSON (`max_range_units`, `no_person_delay_s`, `sensitivity`,
-  `near_threshold`) as last reported by the unit, and `reset_pending` (set when the owner removes the unit in the app,
-  cleared when it resets itself or is claimed again)
+  and `reset_pending` (set when the owner removes the unit in the app, cleared when it resets itself or is
+  claimed again). The old `radar_ok`, `target_cm` and `radar_settings` columns (radar tuning, removed when the radar
+  became a plain HIGH/LOW pin) are dropped from an existing database at startup; no rows are lost
 - `sensor_events` — radar presence detections
 
 `PRAGMA user_version` holds the schema version. When `SCHEMA_VERSION` in `db.js` is higher than the
@@ -130,18 +130,24 @@ data was truncated on 2026-10-30; v3 wiped prototype-2 data on 2026-10-31 when t
 columns were removed; v4 wiped everything on 2026-11-01 for a from-scratch connectivity test). Only bump it when you mean to wipe production. A wipe also deletes the units'
 identities, so every unit has to be re-registered and re-flashed with `tools/flash-device.sh`.
 
+**Database admin.** `http://<server>:4000/admin` is a web page to view and add/edit/delete rows in every table
+(`backend/src/routes/admin.js`, `admin.html`). It is **off until** `ADMIN_USER` and `ADMIN_PASSWORD` are set in
+`backend/.env` on the server (restart the backend after changing them: `docker compose -f docker-compose.prod.yml up -d`).
+Signing in returns an 8 h session token held in memory (a backend restart signs everyone out); 5 wrong logins from one
+address lock it out for 15 min. Every write is logged as `[admin] …` (table, key and column names, never values).
+There is no TLS, so the password and the data (including saved WiFi passwords) cross the network in plain text:
+use a long password, and don't open the page on a network you don't trust.
+
 Device protocol over MQTT (see `backend/src/mqtt.js`): commands `output_set` (green/yellow/red/buzzer),
-`alert_mode_set`, `alarm_stop`, `radar_config` (range, no-person delay, sensitivity, close-range threshold),
-`ping`, `sync`; units publish retained `state` and `sensor_trigger`/`heartbeat`/`radar_info` events.
+`alert_mode_set`, `alarm_stop`, `ping`, `sync`; units publish retained `state` and `sensor_trigger`/`heartbeat` events.
 
 **Online / offline.** Every 5 s the backend sends `ping` to each claimed unit, and the unit answers with a
 `heartbeat` event (it also sends one every 30 s on its own). Any live (non-retained) message from a unit
 refreshes `devices.last_seen`; a unit not heard from for 15 s (`OFFLINE_AFTER_MS` in `device-view.js`, three missed
 pings) is `online: false` in the API and the app gets a `device_status` push when that changes (checked every 1 s), so a
-pulled plug shows as Offline in about 15–16 s. Don't go much lower: a unit can be busy for a few seconds (saving radar
-settings, reconnecting) and a threshold under ~10 s would flip it offline for no reason.
+pulled plug shows as Offline in about 15–16 s. Don't go much lower: a unit can be busy for a few seconds (reconnecting) and a threshold under ~10 s would flip it offline for no reason.
 Retained state replayed by the broker doesn't count as live. Commands to an offline unit get HTTP 409
-(`alarm/stop` is still allowed), and presence/alarm/target are reported as clear/none while it's offline.
+(`alarm/stop` is still allowed), and presence/alarm are reported as clear while it's offline.
 A unit that loses WiFi retries the saved network every 20 s indefinitely and comes back online by itself.
 A unit that can't reach the broker backs off its retries (3 s up to 30 s) and each attempt blocks it for at most 4 s,
 so its radar and local alarm keep working with the internet down. A unit that couldn't claim itself (server

@@ -81,9 +81,6 @@ CREATE TABLE IF NOT EXISTS devices (
   buzzer_state INTEGER NOT NULL DEFAULT 0,
   alarm_state INTEGER NOT NULL DEFAULT 0,
   presence INTEGER NOT NULL DEFAULT 0,
-  radar_settings TEXT NOT NULL DEFAULT '{}',
-  radar_ok INTEGER NOT NULL DEFAULT 0,
-  target_cm INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -96,17 +93,19 @@ CREATE TABLE IF NOT EXISTS sensor_events (
 );
 `);
 
-// Additive changes within a schema version (no data loss). radar_settings is
-// JSON: {max_range_units, no_person_delay_s, sensitivity, near_threshold}, as last
-// reported by the unit.
+// Column changes within a schema version (no data loss).
 function addColumnIfMissing(table, column, definition) {
   if (!db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 }
-addColumnIfMissing("devices", "radar_settings", "TEXT NOT NULL DEFAULT '{}'");
-addColumnIfMissing("devices", "radar_ok", "INTEGER NOT NULL DEFAULT 0");
-addColumnIfMissing("devices", "target_cm", "INTEGER");
+function dropColumnIfPresent(table, column) {
+  if (db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+  }
+}
+// The radar is a plain HIGH/LOW pin now; its tuning (and distance reading) is gone.
+for (const column of ["radar_settings", "radar_ok", "target_cm"]) dropColumnIfPresent("devices", column);
 // Set when the owner removes a unit in the app: the unit must factory-reset itself
 // the next time it is reachable. Cleared by /provisioning/reset-device and on claim.
 addColumnIfMissing("devices", "reset_pending", "INTEGER NOT NULL DEFAULT 0");

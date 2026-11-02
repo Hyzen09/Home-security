@@ -11,6 +11,7 @@ import meRoutes from "./routes/me.js";
 import deviceRoutes from "./routes/devices.js";
 import manufacturingRoutes from "./routes/manufacturing.js";
 import provisioningRoutes from "./routes/provisioning.js";
+import adminRoutes from "./routes/admin.js";
 
 const app = express();
 app.use(cors());
@@ -27,6 +28,8 @@ app.use("/manufacturing", manufacturingRoutes);
 // Not user-authed: the device itself calls this with its own device_secret
 // (see routes/provisioning.js), not a bearer token.
 app.use("/provisioning", provisioningRoutes);
+// Database admin page + API, guarded by ADMIN_KEY (routes/admin.js).
+app.use("/admin", adminRoutes);
 
 const server = http.createServer(app);
 initWs(server);

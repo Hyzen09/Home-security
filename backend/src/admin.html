@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Database admin</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --surface: #ffffff; --line: #dfe3e8; --text: #1b2430; --muted: #657084;
+    --accent: #2d4a86; --accent-text: #ffffff; --danger: #b3261e; --danger-bg: #fdecea;
+    --ok: #1b6e3c; --row-hover: #f0f3f8; --shadow: 0 8px 30px rgba(20, 30, 50, .18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161c; --surface: #1a2029; --line: #2c3541; --text: #e6eaf0; --muted: #93a0b3;
+      --accent: #7fa0e6; --accent-text: #0e1626; --danger: #ff8a80; --danger-bg: #3a1f1d;
+      --ok: #6fd49a; --row-hover: #212a36; --shadow: 0 8px 30px rgba(0, 0, 0, .5);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  button, input, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 6px 12px; }
+  button:hover { background: var(--row-hover); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.primary:hover { filter: brightness(1.08); }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  button.danger:hover { background: var(--danger-bg); }
+  button:disabled { opacity: .5; cursor: default; }
+  input, textarea { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; width: 100%; }
+  input:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  textarea { resize: vertical; min-height: 60px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+  [hidden] { display: none !important; }
+
+  /* Login */
+  #login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 24px; width: 100%; max-width: 380px; }
+  .card h1 { margin: 0 0 4px; font-size: 20px; }
+  .card p { margin: 0 0 16px; color: var(--muted); }
+  .card button { width: 100%; margin-top: 12px; padding: 9px; }
+  .error { color: var(--danger); margin: 10px 0 0; min-height: 1.4em; }
+
+  /* App */
+  #app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; margin: 0; flex: 1; }
+  .layout { display: grid; grid-template-columns: 210px 1fr; min-height: 0; }
+  nav { border-right: 1px solid var(--line); background: var(--surface); padding: 10px; overflow: auto; }
+  nav button { display: flex; justify-content: space-between; width: 100%; border: 0; background: none; text-align: left; padding: 8px 10px; margin-bottom: 2px; border-radius: 6px; }
+  nav button.active { background: var(--accent); color: var(--accent-text); }
+  nav .count { opacity: .75; font-variant-numeric: tabular-nums; }
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 14px 16px; gap: 10px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .toolbar .search { flex: 1 1 220px; max-width: 360px; }
+  .toolbar .spacer { flex: 1; }
+  .pager { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+  .gridwrap { flex: 1; min-height: 0; overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 7px 12px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+  th { position: sticky; top: 0; background: var(--surface); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); z-index: 1; }
+  tbody tr:hover { background: var(--row-hover); }
+  td.null { color: var(--muted); font-style: italic; }
+  td.secret { color: var(--muted); letter-spacing: 1px; }
+  td.actions { width: 1%; text-align: right; position: sticky; right: 0; background: var(--surface); box-shadow: -8px 0 8px -8px rgba(0, 0, 0, .25); }
+  tbody tr:hover td.actions { background: var(--row-hover); }
+  th:last-child { position: sticky; right: 0; z-index: 2; }
+  td.actions button { padding: 3px 9px; margin-left: 4px; font-size: 12px; }
+  .empty { padding: 40px; text-align: center; color: var(--muted); }
+
+  /* Dialog */
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); padding: 0; width: min(560px, calc(100vw - 24px)); box-shadow: var(--shadow); }
+  dialog::backdrop { background: rgba(10, 15, 25, .5); }
+  dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 40px); }
+  dialog h2 { margin: 0; padding: 16px 20px; font-size: 16px; border-bottom: 1px solid var(--line); }
+  .fields { padding: 14px 20px; overflow: auto; display: grid; gap: 12px; }
+  .field label { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; margin-bottom: 4px; }
+  .field label small { font-weight: 400; color: var(--muted); }
+  .field .nullbox { display: flex; justify-content: flex-start; align-items: center; gap: 6px; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 400; }
+  .field .nullbox input { width: auto; }
+  .field input[readonly] { background: var(--bg); color: var(--muted); }
+  .dialog-actions { display: flex; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); }
+  .dialog-actions .spacer { flex: 1; }
+  .dialog-error { padding: 0 20px; color: var(--danger); }
+
+  #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 8px; opacity: 0; pointer-events: none; transition: opacity .2s; max-width: 90vw; }
+  #toast.show { opacity: 1; }
+  #toast.bad { background: var(--danger); color: #fff; }
+
+  @media (max-width: 700px) {
+    .layout { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+    nav { border-right: 0; border-bottom: 1px solid var(--line); display: flex; gap: 6px; overflow-x: auto; padding: 8px; }
+    nav button { width: auto; white-space: nowrap; gap: 8px; margin: 0; }
+  }
+</style>
+</head>
+<body>
+
+<section id="login">
+  <form class="card" id="loginForm">
+    <h1>Database admin</h1>
+    <p>Sign in to manage the database.</p>
+    <input id="userInput" type="text" placeholder="Username" autocomplete="username" autocapitalize="none" spellcheck="false" style="margin-bottom:8px" autofocus>
+    <input id="passInput" type="password" placeholder="Password" autocomplete="current-password">
+    <button class="primary" type="submit">Sign in</button>
+    <p class="error" id="loginError" role="alert"></p>
+  </form>
+</section>
+
+<div id="app" hidden>
+  <header>
+    <h1>Database admin <span id="dbNote" style="color:var(--muted);font-weight:400"></span></h1>
+    <button id="lockBtn">Sign out</button>
+  </header>
+  <div class="layout">
+    <nav id="tableList" aria-label="Tables"></nav>
+    <main>
+      <div class="toolbar">
+        <input class="search" id="search" type="search" placeholder="Search all columns…" aria-label="Search rows">
+        <button id="refreshBtn">Refresh</button>
+        <button class="primary" id="newBtn">New row</button>
+        <span class="spacer"></span>
+        <div class="pager">
+          <button id="prevBtn" aria-label="Previous page">‹</button>
+          <span id="pageInfo"></span>
+          <button id="nextBtn" aria-label="Next page">›</button>
+        </div>
+      </div>
+      <div class="gridwrap" id="gridWrap"></div>
+    </main>
+  </div>
+</div>
+
+<dialog id="rowDialog">
+  <form method="dialog" id="rowForm">
+    <h2 id="dialogTitle"></h2>
+    <div class="fields" id="fields"></div>
+    <p class="dialog-error" id="dialogError" role="alert"></p>
+    <div class="dialog-actions">
+      <button type="button" class="danger" id="deleteBtn">Delete</button>
+      <span class="spacer"></span>
+      <button type="button" id="cancelBtn">Cancel</button>
+      <button type="submit" class="primary" id="saveBtn">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast" role="status"></div>
+
+<script>
+"use strict";
+const PAGE_SIZE = 50;
+const SECRET_COLUMNS = new Set(["device_secret", "password", "token_hash"]);
+const $ = (id) => document.getElementById(id);
+
+let token = "";
+try { token = sessionStorage.getItem("adminToken") || ""; } catch {}
+let tables = [];
+let current = null;      // table info (name, columns, pk, count)
+let page = 0;
+let query = "";
+let rows = [];
+let total = 0;
+let editing = null;      // the row being edited, or null when inserting
+
+// ---------------- helpers ----------------
+
+function h(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") node.className = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else if (v !== undefined && v !== false) node.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) if (c != null) node.append(c);
+  return node;
+}
+
+async function api(path, { method = "GET", body } = {}) {
+  const res = await fetch("/admin/api" + path, {
+    method,
+    headers: { "X-Admin-Token": token, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || res.statusText);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+let toastTimer;
+function toast(message, bad = false) {
+  const t = $("toast");
+  t.textContent = message;
+  t.className = "show" + (bad ? " bad" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.className = ""), 3500);
+}
+
+function signedOut(message = "") {
+  token = "";
+  try { sessionStorage.removeItem("adminToken"); } catch {}
+  $("app").hidden = true;
+  $("login").hidden = false;
+  $("passInput").value = "";
+  $("loginError").textContent = message;
+  $("userInput").focus();
+}
+
+function handleError(err) {
+  if (err.status === 401) signedOut(err.message);
+  else toast(err.message, true);
+}
+
+// ---------------- login ----------------
+
+$("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("loginError").textContent = "";
+  try {
+    const res = await fetch("/admin/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("userInput").value.trim(), password: $("passInput").value }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    token = data.token;
+    $("passInput").value = "";
+    await loadTables();
+    try { sessionStorage.setItem("adminToken", token); } catch {}
+    $("login").hidden = true;
+    $("app").hidden = false;
+  } catch (err) {
+    token = "";
+    $("loginError").textContent = err.message;
+  }
+});
+$("lockBtn").addEventListener("click", async () => {
+  try { await api("/logout", { method: "POST" }); } catch {}
+  signedOut();
+});
+
+// ---------------- tables ----------------
+
+async function loadTables() {
+  tables = await api("/tables");
+  renderNav();
+  const keep = current && tables.find((t) => t.name === current.name);
+  await selectTable((keep || tables[0]).name, keep ? page : 0);
+}
+
+function renderNav() {
+  $("tableList").replaceChildren(
+    ...tables.map((t) =>
+      h("button", { class: current && current.name === t.name ? "active" : "", onclick: () => selectTable(t.name, 0) },
+        h("span", {}, t.name), h("span", { class: "count" }, String(t.count)))
+    )
+  );
+}
+
+async function selectTable(name, toPage = 0) {
+  if (!current || current.name !== name) {
+    query = "";
+    $("search").value = "";
+  }
+  current = tables.find((t) => t.name === name);
+  page = toPage;
+  renderNav();
+  await loadRows();
+}
+
+async function loadRows() {
+  try {
+    const data = await api(`/tables/${encodeURIComponent(current.name)}/rows?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}&q=${encodeURIComponent(query)}`);
+    if (data.rows.length === 0 && page > 0) { page--; return loadRows(); }
+    rows = data.rows;
+    total = data.total;
+    renderGrid();
+  } catch (err) {
+    handleError(err);
+  }
+}
+
+function renderGrid() {
+  const cols = current.columns;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  $("pageInfo").textContent = `${total} row${total === 1 ? "" : "s"} · page ${page + 1} of ${pages}`;
+  $("prevBtn").disabled = page === 0;
+  $("nextBtn").disabled = page + 1 >= pages;
+  $("dbNote").textContent = "· " + current.name;
+
+  if (rows.length === 0) {
+    $("gridWrap").replaceChildren(h("div", { class: "empty" }, query ? "No rows match your search." : "This table is empty."));
+    return;
+  }
+  const head = h("tr", {}, cols.map((c) => h("th", { title: c.type }, c.name)), h("th", {}, ""));
+  const body = rows.map((row) =>
+    h("tr", {},
+      cols.map((c) => cell(row[c.name], c)),
+      h("td", { class: "actions" },
+        h("button", { onclick: () => openDialog(row) }, "Edit"),
+        h("button", { class: "danger", onclick: () => removeRow(row) }, "Delete")))
+  );
+  $("gridWrap").replaceChildren(h("table", {}, h("thead", {}, head), h("tbody", {}, body)));
+}
+
+function cell(value, col) {
+  if (value === null) return h("td", { class: "null" }, "NULL");
+  if (SECRET_COLUMNS.has(col.name)) return h("td", { class: "secret", title: "Hidden in the grid; open Edit to see it" }, "••••••••");
+  const text = String(value);
+  return h("td", { title: text }, text);
+}
+
+$("search").addEventListener("input", (() => {
+  let timer;
+  return (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { query = e.target.value.trim(); page = 0; loadRows(); }, 250);
+  };
+})());
+$("prevBtn").addEventListener("click", () => { page--; loadRows(); });
+$("nextBtn").addEventListener("click", () => { page++; loadRows(); });
+$("refreshBtn").addEventListener("click", async () => {
+  try { await loadTables(); toast("Refreshed"); } catch (err) { handleError(err); }
+});
+$("newBtn").addEventListener("click", () => openDialog(null));
+
+// ---------------- insert / edit ----------------
+
+function openDialog(row) {
+  editing = row;
+  const pkValue = row && current.pk ? row[current.pk] : null;
+  $("dialogTitle").textContent = row ? `Edit ${current.name} · ${pkValue}` : `New row in ${current.name}`;
+  $("dialogError").textContent = "";
+  $("deleteBtn").hidden = !row;
+
+  $("fields").replaceChildren(
+    ...current.columns.map((c) => {
+      const isPk = c.pk;
+      const intPk = isPk && /INT/i.test(c.type);
+      const value = row ? row[c.name] : "";
+      const hint = [c.type || "any", isPk ? "key" : "", c.notnull && !c.default && !intPk ? "required" : "", c.default ? `default ${c.default}` : ""]
+        .filter(Boolean).join(" · ");
+      const long = typeof value === "string" && (value.length > 60 || value.includes("\n"));
+      const input = long
+        ? h("textarea", { name: c.name, rows: "3" })
+        : h("input", { name: c.name, type: "text", autocomplete: "off", spellcheck: "false" });
+      input.value = value == null ? "" : String(value);
+      if (isPk && row) input.readOnly = true;
+      if (!row && intPk) input.placeholder = "(automatic)";
+      if (!row && c.default && !isPk) input.placeholder = `(default ${c.default})`;
+
+      const wrap = h("div", { class: "field", "data-col": c.name }, h("label", {}, c.name, h("small", {}, hint)), input);
+      if (!c.notnull && !isPk) {
+        const nullBox = h("input", { type: "checkbox", "data-null": c.name });
+        nullBox.checked = row ? value === null : false;
+        nullBox.addEventListener("change", () => { input.disabled = nullBox.checked; });
+        input.disabled = nullBox.checked;
+        wrap.append(h("label", { class: "nullbox" }, nullBox, "Set to NULL"));
+      }
+      return wrap;
+    })
+  );
+  $("rowDialog").showModal();
+}
+
+function collectValues() {
+  const values = {};
+  for (const c of current.columns) {
+    const wrap = document.querySelector(`.field[data-col="${CSS.escape(c.name)}"]`);
+    const input = wrap.querySelector("input[name], textarea[name]");
+    const nullBox = wrap.querySelector("[data-null]");
+    const isNull = nullBox && nullBox.checked;
+    if (editing) {
+      if (c.pk) continue;
+      const before = editing[c.name];
+      if (isNull) { if (before !== null) values[c.name] = null; }
+      else if (input.value !== (before == null ? "" : String(before)) || before === null) values[c.name] = input.value;
+    } else {
+      if (isNull) values[c.name] = null;
+      else if (input.value !== "") values[c.name] = input.value;
+    }
+  }
+  return values;
+}
+
+$("rowForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("dialogError").textContent = "";
+  const values = collectValues();
+  if (editing && Object.keys(values).length === 0) { $("rowDialog").close(); return; }
+  const base = `/tables/${encodeURIComponent(current.name)}/rows`;
+  $("saveBtn").disabled = true;
+  try {
+    if (editing) await api(`${base}/${encodeURIComponent(editing[current.pk])}`, { method: "PATCH", body: { values } });
+    else await api(base, { method: "POST", body: { values } });
+    $("rowDialog").close();
+    toast(editing ? "Row updated" : "Row added");
+    await loadTables();
+  } catch (err) {
+    if (err.status === 401) { $("rowDialog").close(); handleError(err); }
+    else $("dialogError").textContent = err.message;
+  } finally {
+    $("saveBtn").disabled = false;
+  }
+});
+$("cancelBtn").addEventListener("click", () => $("rowDialog").close());
+$("deleteBtn").addEventListener("click", () => { const row = editing; $("rowDialog").close(); removeRow(row); });
+
+// ---------------- delete ----------------
+
+const DELETE_WARNINGS = {
+  users: "This also deletes their sessions and saved WiFi networks. Units they own will block the delete.",
+  devices: "The unit's identity is lost: the physical unit can no longer claim itself until it is re-flashed.",
+};
+
+async function removeRow(row) {
+  if (!current.pk) return toast("This table has no single key, so rows can't be deleted here", true);
+  const id = row[current.pk];
+  const extra = DELETE_WARNINGS[current.name] ? `\n\n${DELETE_WARNINGS[current.name]}` : "";
+  if (!confirm(`Delete ${current.name} row "${id}" from the production database?${extra}\n\nThis can't be undone.`)) return;
+  try {
+    await api(`/tables/${encodeURIComponent(current.name)}/rows/${encodeURIComponent(id)}`, { method: "DELETE" });
+    toast("Row deleted");
+    await loadTables();
+  } catch (err) {
+    handleError(err);
+  }
+}
+
+// ---------------- start ----------------
+
+(async () => {
+  if (!token) return;
+  try {
+    await loadTables();
+    $("login").hidden = true;
+    $("app").hidden = false;
+  } catch (err) {
+    signedOut(err.status === 401 ? "" : err.message);
+  }
+})();
+</script>
+</body>
+</html>
