@@ -58,7 +58,7 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 | Backend | `backend/` | Express REST API, MQTT bridge, WebSocket push, SQLite. Online/offline tracking, saved WiFi networks, unit registry |
 | MQTT broker | `mosquitto/` | Eclipse Mosquitto 2 carrying `devices/<id>/commands · state · events` |
 | Android app | `app/` (local), APK on Releases | Flutter. Login, saved WiFi, dashboard (live signal, Alert Mode, renameable relays), night schedule, Add Device, alarm tone/notification, background service that rings even with the app closed |
-| Installer | `tools/esp-install.sh` (local) | One file: installs PlatformIO, registers a unit, flashes it, checks it boots. Its section 2 ("YOUR PIN LOGIC") is where the customer's pin code goes |
+| Installer | `tools/esp-install.sh` (local) | One file: installs PlatformIO, registers a unit, flashes it, checks it boots. Its section 2 ("YOUR PIN LOGIC") is where the customer's pin code goes. Step-by-step guide with 8 examples: `tools/ESP-INSTALL-GUIDE.md` / `.docx` (local) |
 | Flash tool | `tools/flash-device.sh` (local) | The older flasher: registers a new unit on every run, builds `firmware/` as is |
 | Hosting / CI | `docker-compose.prod.yml`, `.github/workflows/deploy.yml` | Push to `main` → GitHub Actions → SSH → rebuild on EC2 |
 
