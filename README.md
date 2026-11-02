@@ -3,9 +3,10 @@
 **Android app:** [download the latest APK](https://github.com/Hyzen09/Home-security/releases/latest/download/home-security.apk)
 (v2.2.0; all versions on the [Releases](https://github.com/Hyzen09/Home-security/releases) page).
 
-A home-security prototype. Each **unit** is an ESP32 with a 24 GHz radar (detects whether someone is in the room), a
-traffic light and a buzzer. An **Android app** shows every unit live, switches its lamps and buzzer, arms an *alert mode*
-(the unit sounds its own buzzer the instant the radar sees someone new). A **cloud backend** (Node.js +
+A home-security prototype. Each **unit** is an ESP32 with a 24 GHz radar (detects whether someone is in the room) and two
+relays. An **Android app** shows every unit live with its WiFi signal strength, switches its two relays, and arms an *alarm*
+that rings the phone the instant the radar sees someone new, even when the app is closed. The alarm and both relays can be
+renamed in the app. The unit's remaining pins run the customer's own code. A **cloud backend** (Node.js +
 Mosquitto on AWS EC2) sits between them so it works from anywhere, with the app on mobile data and the unit behind a home router.
 
 > **Repo scope:** this repository tracks only the **server-side** code — `backend/`, `mosquitto/`, the compose files and the
@@ -19,8 +20,8 @@ Mosquitto on AWS EC2) sits between them so it works from anywhere, with the app 
  HOME NETWORK                                    INTERNET            AWS EC2 · Docker Compose
 ┌────────────────────────────────┐                              ┌────────────────────────────────────────┐
 │ SECURITY UNIT (ESP32)          │── MQTT :1883 ───────────────▶│ MOSQUITTO 2                            │
-│  radar · traffic light ·       │   state (retained), events   │  anonymous · no TLS · no persistence   │
-│  buzzer · BOOT button          │◀──────────────────────────── │                                        │
+│  radar · 2 relays · custom     │   state (retained), events   │  anonymous · no TLS · no persistence   │
+│  pins · BOOT button            │◀──────────────────────────── │                                        │
 │                                │   commands                   └───────────────▲────────────────────────┘
 │                                │                                              │ MQTT client
 │                                │── HTTP :4000 ───────────────▶┌───────────────┴────────────────────────┐
@@ -38,8 +39,8 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 
 **Design rules**
 
-1. **The alarm never depends on the cloud.** Radar → buzzer is decided on the unit, in milliseconds; the cloud only hears
-   about it afterwards.
+1. **The alarm is decided on the unit.** Armed + radar HIGH → alarm, in milliseconds, without asking the cloud; the cloud
+   carries it to the phone. The customer's own code (`onPersonDetected()`) runs on the unit at the same moment.
 2. **The unit is the source of truth for its own state.** The backend shows what the unit last *reported*; a command is only
    reflected once the unit confirms it.
 3. **Nothing is shown as live unless it was heard recently.** A unit that goes quiet shows Offline within about 15 seconds and
@@ -52,11 +53,12 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 
 | Part | Where | What it does |
 |---|---|---|
-| Security unit | `firmware/` (local) | ESP32 DevKit, Arduino/PlatformIO. Radar OT2 on D4 (a plain HIGH/LOW pin), traffic light D18/D19/D21, buzzer D22, BOOT button. Runs the local alarm, MQTT, and the setup hotspot |
+| Security unit | `firmware/` (local) | ESP32 DevKit, Arduino/PlatformIO. Radar OT2 on D4 (a plain HIGH/LOW pin), relay 1 on D19, relay 2 on D21, BOOT button; every other free pin (D18 and D22 included) is for the customer's code. Runs the alarm, MQTT, and the setup hotspot |
 | Backend | `backend/` | Express REST API, MQTT bridge, WebSocket push, SQLite. Online/offline tracking, saved WiFi networks, unit registry |
 | MQTT broker | `mosquitto/` | Eclipse Mosquitto 2 carrying `devices/<id>/commands · state · events` |
-| Android app | `app/` (local), APK on Releases | Flutter. Login, saved WiFi, dashboard, Add Device, alarm tone/notification, background monitor |
-| Flash tool | `tools/flash-device.sh` (local) | Registers a new unit, burns its identity, erases and flashes the board, checks it boots |
+| Android app | `app/` (local), APK on Releases | Flutter. Login, saved WiFi, dashboard (live signal, named alarm + relays), Add Device, alarm tone/notification, background service that rings even with the app closed |
+| Installer | `tools/esp-install.sh` (local) | One file: installs PlatformIO, registers a unit, flashes it, checks it boots. Its section 2 ("YOUR PIN LOGIC") is where the customer's pin code goes |
+| Flash tool | `tools/flash-device.sh` (local) | The older flasher: registers a new unit on every run, builds `firmware/` as is |
 | Hosting / CI | `docker-compose.prod.yml`, `.github/workflows/deploy.yml` | Push to `main` → GitHub Actions → SSH → rebuild on EC2 |
 
 **Key flows** (message-level detail is in `system_architecture.md` / `flow.svg`, kept locally)
@@ -64,13 +66,15 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 - **Add a unit.** Unit (setup mode) hosts the open hotspot `SECURE-<id>` → the app scans, joins it, reads `GET /info`, sends
   `POST /provision {ssid, password, owner_user_id}` → the unit saves them and reboots → joins WiFi → connects MQTT → calls
   `POST /provisioning/claim-device` with its secret → the account owns it (≈5 s end to end).
-- **Control.** App `PATCH /devices/:id/outputs/green` → backend publishes `output_set` → unit switches the pin and publishes its
+- **Control.** App `PATCH /devices/:id/outputs/relay1` → backend publishes `output_set` → unit switches the pin and publishes its
   retained `state` → backend stores it and pushes `device_state` over the WebSocket (≈0.3 s round trip). Commands to an
   offline unit are refused with HTTP 409.
-- **Alarm.** Radar OT2 goes HIGH while armed → buzzer on **immediately, on the unit** → `sensor_trigger` +
-  state published → the app plays its alarm tone and shows a notification with Stop → Stop silences it, the unit stays armed.
-- **Online / offline.** Backend pings every unit every 5 s, the unit answers with a heartbeat; 15 s of silence = Offline
-  (pushed to the app). Measured on hardware with the power cut: Offline after 13 s, Online again 4 s after power returned.
+- **Alarm.** Radar OT2 goes HIGH while armed → the unit sets its alarm **immediately** and runs the customer's `onPersonDetected()`
+  → `sensor_trigger` + state published → the phone plays its alarm tone and shows a notification with Stop (from the app's
+  background service, so also when the app is closed) → Stop ends it, the unit stays armed.
+- **Online / offline + signal.** Backend pings every unit every 5 s, the unit answers with a heartbeat carrying its WiFi RSSI;
+  15 s of silence = Offline (pushed to the app); a changed RSSI is pushed as `device_rssi`. Measured on hardware with the power
+  cut: Offline after 13 s, Online again 4 s after power returned.
 - **Remove a unit.** `DELETE /devices/:id` unclaims it, sets `reset_pending` and nudges the unit (`sync`); the unit asks
   `POST /provisioning/status` with its secret and, only if told to, factory-resets itself back into setup mode (≈5 s). A unit that
   was offline resets the moment it comes back.
@@ -81,11 +85,13 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 |---|---|
 | Backend ping / online check / offline threshold | every 5 s / every 1 s / 15 s without a message |
 | WebSocket keep-alive / app reconnects after silence | every 20 s / 60 s |
-| Unit heartbeat | on connect, every 30 s, and as the answer to each ping |
+| Unit heartbeat (carries the WiFi RSSI) | on connect, every 30 s, and as the answer to each ping |
 | Unit WiFi retry (after it has joined once) | every 20 s, forever |
 | Unit MQTT retry | 3 s, doubling to 30 s; each attempt blocks the unit for at most 4 s |
 | Unit claim retry | every 5 s five times, then every 30 s, forever |
-| Local alarm | new presence while armed → buzzer on immediately; off 5 s after presence clears |
+| Alarm | new presence while armed → on immediately; off 5 s after presence clears, on disarm, or on Stop |
+| Signal strength in the app | Excellent ≥ −55 dBm · Good ≥ −67 · Fair ≥ −75 · Weak ≥ −85 · Very weak below |
+| App background service | rings with the app closed; restarts after a reboot or app update; reconnects 2 s → 30 s backoff |
 | Setup-mode WiFi scan (for the app's "can the unit see this network" check) | every 5 minutes, only while nobody is connected |
 | Add Device waits for the unit to appear | up to 60 s |
 
@@ -97,7 +103,7 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 | off | offline |
 
 **If something breaks:** a router outage, no internet, or a broker restart should each recover by themselves (the unit keeps
-retrying and the alarm keeps working locally) — see "What's verified" for which of these have actually been tested.
+retrying and its alarm and custom code keep working locally) — see "What's verified" for which of these have actually been tested.
 
 ## API reference (summary)
 
@@ -109,8 +115,9 @@ retrying and the alarm keeps working locally) — see "What's verified" for whic
 | `POST /auth/register` · `/auth/login` · `/auth/logout` | — / Bearer | name + phone (**no OTP**) → token |
 | `GET /me` · `PATCH /me/settings` | Bearer | profile, alert tone |
 | `GET/POST /me/wifi-networks` · `PATCH/DELETE /me/wifi-networks/:id` | Bearer | saved 2.4 GHz networks (8–63 char password, or empty) |
-| `GET /devices` · `GET /devices/:id` · `PATCH /devices/:id` | Bearer | list, one unit (with `online`), rename |
-| `PATCH /devices/:id/outputs/:output` | Bearer | `green` `yellow` `red` `buzzer` — 409 if offline |
+| `GET /devices` · `GET /devices/:id` | Bearer | list, one unit (with `online`, `rssi`, `relay1`/`relay2`, names) |
+| `PATCH /devices/:id` | Bearer | rename: any of `name` (1–40), `alarm_name`, `relay1_name`, `relay2_name` (≤ 24; empty = default) |
+| `PATCH /devices/:id/outputs/:output` | Bearer | `relay1` (D19) `relay2` (D21) — 409 if offline |
 | `PATCH /devices/:id/alert-mode` | Bearer | arm / disarm — 409 if offline |
 | `POST /devices/:id/alarm/stop` | Bearer | silence, stay armed |
 | `GET /devices/:id/events` | Bearer | recent detections |
@@ -122,15 +129,15 @@ retrying and the alarm keeps working locally) — see "What's verified" for whic
 **Unit local HTTP** (setup hotspot only, `192.168.4.1`): `GET /info`, `POST /provision {ssid, password, owner_user_id}`.
 
 **MQTT** (`devices/<id>/…`): `commands` ← `output_set`, `alert_mode_set`, `alarm_stop`, `ping`, `sync` ·
-`state` (retained) → green/yellow/red/buzzer/alarm/presence/alert_mode_active · `events` → `sensor_trigger`, `heartbeat`.
+`state` (retained) → relay1/relay2/alarm/presence/alert_mode_active · `events` → `sensor_trigger`, `heartbeat {rssi}`.
 
-**WebSocket** (`/ws?token=…`): `device_state`, `device_status`, `sensor_event`, `device_removed`, `hb`.
+**WebSocket** (`/ws?token=…`): `device_state`, `device_status`, `device_rssi`, `sensor_event`, `device_removed`, `hb`.
 
 ## Data model (schema v4)
 
 `users` (name, unique phone, settings) · `sessions` (SHA-256 of each token) · `wifi_networks` (per user, **password in plain
-text**) · `devices` (id, secret, owner, name, status, `wifi_ssid`, `last_seen`, lamp/buzzer/alarm/presence state,
-`reset_pending`) · `sensor_events`. `PRAGMA user_version` holds the schema version; **bumping `SCHEMA_VERSION` in `db.js`
+text**) · `devices` (id, secret, owner, name, alarm/relay names, status, `wifi_ssid`, `last_seen`, `rssi`, relay/alarm/presence
+state, `reset_pending`) · `sensor_events`. `PRAGMA user_version` holds the schema version; **bumping `SCHEMA_VERSION` in `db.js`
 drops every table** (the documented way to wipe production — all units must then be re-flashed). Details in
 [DEPLOYMENT.md](DEPLOYMENT.md).
 
@@ -163,8 +170,8 @@ firmware/.pio-venv/bin/pip install platformio
 |---|---|---|
 | Radar VCC / GND | 3V3 / GND | Ai-Thinker Rd-03L_V2 |
 | Radar OT2 | D4 (GPIO4) | digital output: HIGH while it sees someone, LOW when not. The radar's OT1 and RX pins are not connected |
-| Traffic light green / yellow / red | D18 / D19 / D21 | HIGH = lit |
-| Active buzzer | D22 | HIGH = sounding |
+| Relay 1 / relay 2 (switched from the app) | D19 / D21 | HIGH = on (`RELAY_ACTIVE_LOW=1` in `esp-install.sh` for boards that switch on LOW) |
+| Anything else (buzzer, lamps, sensors) | 13 14 16 17 18 22 23 25 26 27 32 33 (34–39 input only) | the customer's code, see "YOUR PIN LOGIC" in `tools/esp-install.sh` |
 | BOOT button (on the board) | GPIO0 | hold 5 s = factory reset |
 
 The unit reads that one wire and nothing else from the radar — there is no serial link to it.
@@ -314,7 +321,8 @@ offline, a wrong WiFi password reaching the unit, a 5 GHz-only network, and any 
   control is not); no database backups; single instance.
 - **No schedule:** alert mode is armed and disarmed manually (it survives a power cut); there is no timed alert window yet.
 - **iOS:** Add Device cannot work on iOS (Apple gives apps no WiFi scanning); the iOS build is unverified.
-- **No OTA firmware updates**, and push is a WebSocket stand-in for FCM, so swiping the app away stops alerts.
+- **No OTA firmware updates.** Push is a WebSocket held by the app's foreground service (no FCM), so it keeps working with the
+  app closed, but a phone maker's aggressive battery saver (some Xiaomi/Oppo/Vivo builds) can still kill it; the Pixel doesn't.
 - **Android quirks:** the app's WiFi scan is rate-limited by Android (if "No nearby devices found" shows while the unit's hotspot
   is up, wait a minute and press Search again); an Add can fail once with "Couldn't join SECURE-…" if it lands on the unit's
   periodic scan — just try again.

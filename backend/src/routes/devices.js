@@ -1,7 +1,7 @@
 import { Router } from "express";
 import db from "../db.js";
 import { requestSync, setAlertMode, setOutput, stopAlarm } from "../mqtt.js";
-import { OUTPUTS, isOnline, toPublicDevice } from "../device-view.js";
+import { LABELS, LABEL_MAX, OUTPUTS, isOnline, toPublicDevice } from "../device-view.js";
 
 const router = Router();
 
@@ -35,18 +35,42 @@ router.get("/:id", (req, res) => {
   res.json(toPublicDevice(device));
 });
 
+// Renames the unit and/or its alarm and relays; send only the fields that change.
+// An empty alarm/relay name (or null) goes back to the app's default label.
 router.patch("/:id", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;
-  const name = String(req.body?.name ?? "").trim();
-  if (!name || name.length > 40) return res.status(400).json({ error: "Name must be 1–40 characters" });
+  const body = req.body || {};
+  const updates = {};
 
-  const clash = db
-    .prepare("SELECT 1 FROM devices WHERE owner_user_id = ? AND device_id != ? AND lower(name) = lower(?)")
-    .get(req.user.id, device.device_id, name);
-  if (clash) return res.status(409).json({ error: `You already have a device named "${name}"` });
+  if (body.name !== undefined) {
+    const name = String(body.name ?? "").trim();
+    if (!name || name.length > 40) return res.status(400).json({ error: "Name must be 1–40 characters" });
+    const clash = db
+      .prepare("SELECT 1 FROM devices WHERE owner_user_id = ? AND device_id != ? AND lower(name) = lower(?)")
+      .get(req.user.id, device.device_id, name);
+    if (clash) return res.status(409).json({ error: `You already have a device named "${name}"` });
+    updates.name = name;
+  }
+  for (const label of LABELS) {
+    if (body[label] === undefined) continue;
+    if (body[label] !== null && typeof body[label] !== "string") {
+      return res.status(400).json({ error: `${label} must be a string` });
+    }
+    const value = (body[label] ?? "").trim();
+    if (value.length > LABEL_MAX) return res.status(400).json({ error: `Names must be ${LABEL_MAX} characters or fewer` });
+    updates[label] = value || null;
+  }
+  if (Object.keys(updates).length === 0) {
+    return res.status(400).json({ error: `Send name or one of ${LABELS.join(", ")}` });
+  }
 
-  db.prepare("UPDATE devices SET name = ? WHERE device_id = ?").run(name, device.device_id);
+  // Column names come from the fixed list above, never from the request.
+  const columns = Object.keys(updates);
+  db.prepare(`UPDATE devices SET ${columns.map((c) => `${c} = ?`).join(", ")} WHERE device_id = ?`).run(
+    ...columns.map((c) => updates[c]),
+    device.device_id
+  );
   res.json(toPublicDevice(db.prepare("SELECT * FROM devices WHERE device_id = ?").get(device.device_id)));
 });
 
@@ -60,7 +84,7 @@ router.get("/:id/events", (req, res) => {
   res.json(events);
 });
 
-// Green / yellow / red traffic-light lamps and the buzzer.
+// The two relays the app switches (relay1 = D19, relay2 = D21).
 router.patch("/:id/outputs/:output", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;
@@ -106,7 +130,8 @@ router.delete("/:id", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;
   db.prepare(
-    "UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, reset_pending = 1 WHERE device_id = ?"
+    `UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, alarm_name = NULL, relay1_name = NULL,
+       relay2_name = NULL, reset_pending = 1 WHERE device_id = ?`
   ).run(device.device_id);
   requestSync(device.device_id);
   res.json({ ok: true });

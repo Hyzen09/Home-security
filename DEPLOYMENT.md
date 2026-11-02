@@ -117,11 +117,13 @@ SQLite tables (`backend/src/db.js`):
 - `users` — name, unique phone, `settings` JSON (`alert_tone`)
 - `sessions` — SHA-256 of each random bearer token → user (logout deletes; no expiry yet)
 - `wifi_networks` — the account's saved WiFi networks (SSID + password, plain text), unique per user
-- `devices` — unit identity/secret, owner, name, `wifi_ssid` it claimed on, and live state:
-  `green_state`/`yellow_state`/`red_state`/`buzzer_state`, `alarm_state`, `presence`, `alert_mode_active`,
+- `devices` — unit identity/secret, owner, name, the owner's `alarm_name`/`relay1_name`/`relay2_name` (NULL = the
+  app's default), `wifi_ssid` it claimed on, `rssi` (last reported WiFi signal, dBm), and live state:
+  `relay1_state`/`relay2_state`, `alarm_state`, `presence`, `alert_mode_active`,
   and `reset_pending` (set when the owner removes the unit in the app, cleared when it resets itself or is
-  claimed again). The old `radar_ok`, `target_cm` and `radar_settings` columns (radar tuning, removed when the radar
-  became a plain HIGH/LOW pin) are dropped from an existing database at startup; no rows are lost
+  claimed again). Column changes run at startup on an existing database without losing rows: the old radar columns
+  (`radar_ok`, `target_cm`, `radar_settings`) are dropped; when the traffic light + buzzer became two relays (2026-11-02)
+  `yellow_state` → `relay1_state` and `red_state` → `relay2_state` were renamed and `green_state`/`buzzer_state` dropped
 - `sensor_events` — radar presence detections
 
 `PRAGMA user_version` holds the schema version. When `SCHEMA_VERSION` in `db.js` is higher than the
@@ -138,8 +140,9 @@ address lock it out for 15 min. Every write is logged as `[admin] …` (table, k
 There is no TLS, so the password and the data (including saved WiFi passwords) cross the network in plain text:
 use a long password, and don't open the page on a network you don't trust.
 
-Device protocol over MQTT (see `backend/src/mqtt.js`): commands `output_set` (green/yellow/red/buzzer),
-`alert_mode_set`, `alarm_stop`, `ping`, `sync`; units publish retained `state` and `sensor_trigger`/`heartbeat` events.
+Device protocol over MQTT (see `backend/src/mqtt.js`): commands `output_set` (`relay1`/`relay2`),
+`alert_mode_set`, `alarm_stop`, `ping`, `sync`; units publish retained `state` and `sensor_trigger`/`heartbeat` events
+(the heartbeat carries `rssi`, saved and pushed to the app as `device_rssi` when it changes).
 
 **Online / offline.** Every 5 s the backend sends `ping` to each claimed unit, and the unit answers with a
 `heartbeat` event (it also sends one every 30 s on its own). Any live (non-retained) message from a unit

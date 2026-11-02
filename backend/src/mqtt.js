@@ -6,14 +6,14 @@ import { isOnline } from "./device-view.js";
 const BROKER_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 
 // Device protocol (firmware/src/main.ino, simulator/device-sim.js):
-//   devices/{id}/commands  <- {type:"output_set", output:"green"|"yellow"|"red"|"buzzer", state}
+//   devices/{id}/commands  <- {type:"output_set", output:"relay1"|"relay2", state}
 //                             {type:"alert_mode_set", active}
 //                             {type:"alarm_stop"}  (silence; stays armed)
 //                             {type:"ping"}  (every 5 s; the unit answers with a heartbeat event)
 //                             {type:"sync"}  (the unit was removed in the app: it asks POST /provisioning/status and resets)
-//   devices/{id}/state     -> {green, yellow, red, buzzer, alarm, presence, alert_mode_active,
-//                              uptime_ms} (retained)
-//   devices/{id}/events    -> {type:"sensor_trigger"} on each new presence detection, {type:"heartbeat"}
+//   devices/{id}/state     -> {relay1, relay2, alarm, presence, alert_mode_active, uptime_ms} (retained)
+//   devices/{id}/events    -> {type:"sensor_trigger"} on each new presence detection,
+//                             {type:"heartbeat", rssi} (answers each ping; rssi = WiFi signal, dBm)
 
 export const client = mqtt.connect(BROKER_URL, {
   clientId: "cloud-backend-" + Math.random().toString(16).slice(2),
@@ -96,9 +96,13 @@ client.on("message", (topic, payloadBuf, packet) => {
     if (device.reset_pending && device.status !== "claimed") requestSync(deviceId);
   }
 
+  if (topic.endsWith("/events") && msg.type === "heartbeat" && Number.isInteger(msg.rssi)) {
+    noteRssi(device, msg.rssi);
+  }
+
   if (topic.endsWith("/events") && msg.type === "sensor_trigger") {
-    // The unit already sounds its own buzzer locally when armed; the cloud's
-    // job here is logging + notification.
+    // The unit decides the alarm itself when armed (and its state push rings the
+    // phone); the cloud's job here is logging + notification.
     const alertActive = !!device.alert_mode_active;
     db.prepare("INSERT INTO sensor_events (device_id, alert_mode_active) VALUES (?, ?)").run(deviceId, bit(alertActive));
     console.log(`[mqtt] sensor_trigger device=${deviceId} alert_mode_active=${alertActive}`);
@@ -116,14 +120,11 @@ client.on("message", (topic, payloadBuf, packet) => {
 
   if (topic.endsWith("/state")) {
     db.prepare(
-      `UPDATE devices SET green_state = ?, yellow_state = ?, red_state = ?, buzzer_state = ?,
-         alarm_state = ?, presence = ?, alert_mode_active = ?
+      `UPDATE devices SET relay1_state = ?, relay2_state = ?, alarm_state = ?, presence = ?, alert_mode_active = ?
        WHERE device_id = ?`
     ).run(
-      bit(msg.green),
-      bit(msg.yellow),
-      bit(msg.red),
-      bit(msg.buzzer),
+      bit(msg.relay1),
+      bit(msg.relay2),
       bit(msg.alarm),
       bit(msg.presence),
       bit(msg.alert_mode_active),
@@ -138,10 +139,8 @@ client.on("message", (topic, payloadBuf, packet) => {
       pushToUser(userId, {
         type: "device_state",
         device_id: deviceId,
-        green: !!msg.green,
-        yellow: !!msg.yellow,
-        red: !!msg.red,
-        buzzer: !!msg.buzzer,
+        relay1: !!msg.relay1,
+        relay2: !!msg.relay2,
         alarm: !!msg.alarm,
         presence: !!msg.presence,
         alert_mode_active: !!msg.alert_mode_active,
@@ -149,6 +148,16 @@ client.on("message", (topic, payloadBuf, packet) => {
     }
   }
 });
+
+// Live WiFi signal: saved, and pushed to the owner's app when it changes. A heartbeat
+// answers each 5 s ping, so the app sees the signal move as the unit is carried around.
+function noteRssi(device, rssi) {
+  if (device.rssi === rssi) return;
+  db.prepare("UPDATE devices SET rssi = ? WHERE device_id = ?").run(rssi, device.device_id);
+  if (device.owner_user_id) {
+    pushToUser(device.owner_user_id, { type: "device_rssi", device_id: device.device_id, rssi });
+  }
+}
 
 // Tells a unit to ask the backend (HTTP, with its device_secret) whether it was
 // removed from its owner's account and must reset. It is only a nudge: the broker

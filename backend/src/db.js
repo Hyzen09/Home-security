@@ -61,10 +61,12 @@ CREATE TABLE IF NOT EXISTS wifi_networks (
   UNIQUE (user_id, ssid)
 );
 
--- One row per physical unit (ESP32 + radar + 3-colour traffic light + buzzer).
+-- One row per physical unit (ESP32 + radar + two relays the app switches).
 -- device_secret is burned in at flash time and is the unit's permanent
 -- credential for /provisioning/*. name is the owner's label, unique per
--- owner; wifi_ssid is the network the unit reported when it claimed itself.
+-- owner; alarm_name / relay1_name / relay2_name are the owner's labels for the
+-- unit's alarm and relays (NULL = the app's default). wifi_ssid is the network
+-- the unit reported when it claimed itself; rssi its last reported signal (dBm).
 CREATE TABLE IF NOT EXISTS devices (
   device_id TEXT PRIMARY KEY,
   device_secret TEXT NOT NULL,
@@ -75,10 +77,8 @@ CREATE TABLE IF NOT EXISTS devices (
   wifi_ssid TEXT,
   last_seen TEXT,
   alert_mode_active INTEGER NOT NULL DEFAULT 0,
-  green_state INTEGER NOT NULL DEFAULT 0,
-  yellow_state INTEGER NOT NULL DEFAULT 0,
-  red_state INTEGER NOT NULL DEFAULT 0,
-  buzzer_state INTEGER NOT NULL DEFAULT 0,
+  relay1_state INTEGER NOT NULL DEFAULT 0,
+  relay2_state INTEGER NOT NULL DEFAULT 0,
   alarm_state INTEGER NOT NULL DEFAULT 0,
   presence INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -104,11 +104,22 @@ function dropColumnIfPresent(table, column) {
     db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
   }
 }
+function renameColumnIfPresent(table, from, to) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (columns.includes(from) && !columns.includes(to)) db.exec(`ALTER TABLE ${table} RENAME COLUMN ${from} TO ${to}`);
+}
 // The radar is a plain HIGH/LOW pin now; its tuning (and distance reading) is gone.
 for (const column of ["radar_settings", "radar_ok", "target_cm"]) dropColumnIfPresent("devices", column);
 // Set when the owner removes a unit in the app: the unit must factory-reset itself
 // the next time it is reachable. Cleared by /provisioning/reset-device and on claim.
 addColumnIfMissing("devices", "reset_pending", "INTEGER NOT NULL DEFAULT 0");
+// The traffic light + buzzer became two relays: yellow (D19) -> relay 1, red (D21) -> relay 2;
+// D18 and D22 went to the custom code.
+renameColumnIfPresent("devices", "yellow_state", "relay1_state");
+renameColumnIfPresent("devices", "red_state", "relay2_state");
+for (const column of ["green_state", "buzzer_state"]) dropColumnIfPresent("devices", column);
+addColumnIfMissing("devices", "rssi", "INTEGER");
+for (const column of ["alarm_name", "relay1_name", "relay2_name"]) addColumnIfMissing("devices", column, "TEXT");
 
 export function nextDefaultDeviceName(ownerUserId) {
   const taken = new Set(
