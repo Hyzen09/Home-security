@@ -35,8 +35,8 @@ router.get("/:id", (req, res) => {
   res.json(toPublicDevice(device));
 });
 
-// Renames the unit and/or its alarm and relays; send only the fields that change.
-// An empty alarm/relay name (or null) goes back to the app's default label.
+// Renames the unit and/or its relays; send only the fields that change.
+// An empty relay name (or null) goes back to the app's default (the pin name).
 router.patch("/:id", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;
@@ -130,8 +130,8 @@ router.delete("/:id", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;
   db.prepare(
-    `UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, alarm_name = NULL, relay1_name = NULL,
-       relay2_name = NULL, reset_pending = 1 WHERE device_id = ?`
+    `UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, relay1_name = NULL, relay2_name = NULL,
+       reset_pending = 1 WHERE device_id = ?`
   ).run(device.device_id);
   requestSync(device.device_id);
   res.json({ ok: true });

@@ -2,8 +2,8 @@
 // provisioning.js and mqtt.js don't drift out of sync.
 export const OUTPUTS = ["relay1", "relay2"]; // pins D19, D21
 
-// The owner's labels for a unit's alarm and relays (PATCH /devices/:id); null = the app's default.
-export const LABELS = ["alarm_name", "relay1_name", "relay2_name"];
+// The owner's names for a unit's relays (PATCH /devices/:id); null = the app's default (the pin name).
+export const LABELS = ["relay1_name", "relay2_name"];
 export const LABEL_MAX = 24;
 
 // A unit counts as online while it has been heard from recently. The backend
@@ -30,7 +30,6 @@ export function toPublicDevice(row) {
     last_seen: row.last_seen,
     online,
     alert_mode_active: !!row.alert_mode_active,
-    alarm_name: row.alarm_name,
     relay1_name: row.relay1_name,
     relay2_name: row.relay2_name,
     relay1: !!row.relay1_state,

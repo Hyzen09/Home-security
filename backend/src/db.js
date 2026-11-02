@@ -64,8 +64,8 @@ CREATE TABLE IF NOT EXISTS wifi_networks (
 -- One row per physical unit (ESP32 + radar + two relays the app switches).
 -- device_secret is burned in at flash time and is the unit's permanent
 -- credential for /provisioning/*. name is the owner's label, unique per
--- owner; alarm_name / relay1_name / relay2_name are the owner's labels for the
--- unit's alarm and relays (NULL = the app's default). wifi_ssid is the network
+-- owner; relay1_name / relay2_name are the owner's names for the unit's relays
+-- (NULL = the app's default, the pin name). wifi_ssid is the network
 -- the unit reported when it claimed itself; rssi its last reported signal (dBm).
 CREATE TABLE IF NOT EXISTS devices (
   device_id TEXT PRIMARY KEY,
@@ -119,7 +119,8 @@ renameColumnIfPresent("devices", "yellow_state", "relay1_state");
 renameColumnIfPresent("devices", "red_state", "relay2_state");
 for (const column of ["green_state", "buzzer_state"]) dropColumnIfPresent("devices", column);
 addColumnIfMissing("devices", "rssi", "INTEGER");
-for (const column of ["alarm_name", "relay1_name", "relay2_name"]) addColumnIfMissing("devices", column, "TEXT");
+for (const column of ["relay1_name", "relay2_name"]) addColumnIfMissing("devices", column, "TEXT");
+dropColumnIfPresent("devices", "alarm_name"); // briefly added 2026-11-02, then dropped: the alarm isn't renamed
 // Set while the owner's night alarm arms the unit (reported by the unit).
 addColumnIfMissing("devices", "schedule_active", "INTEGER NOT NULL DEFAULT 0");
 
