@@ -1,6 +1,6 @@
 // Shared device shape for API responses and live pushes, so devices.js,
 // provisioning.js and mqtt.js don't drift out of sync.
-export const OUTPUTS = ["relay1", "relay2"]; // pins D19, D21
+export const OUTPUTS = ["relay1", "relay2"]; // pins D19, D21 on the ESP32 unit; D2, D3 on the ESP-12F
 
 // The owner's names for a unit's relays (PATCH /devices/:id); null = the app's default (the pin name).
 export const LABELS = ["relay1_name", "relay2_name"];
@@ -33,6 +33,10 @@ export function toPublicDevice(row) {
     // The owner's name, else the unit's pin name (ESP-12F), else null (the app's default).
     relay1_name: row.relay1_name ?? row.relay1_pin ?? null,
     relay2_name: row.relay2_name ?? row.relay2_pin ?? null,
+    // The pins the relays are on, as the unit reported them; null = not reported (the ESP32
+    // firmware: D19, D21). Lets the app tell the owner's own names from the pin names.
+    relay1_pin: row.relay1_pin ?? null,
+    relay2_pin: row.relay2_pin ?? null,
     relay1: !!row.relay1_state,
     relay2: !!row.relay2_state,
     // WiFi signal strength in dBm, refreshed by every heartbeat (about every 5 s).

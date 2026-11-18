@@ -63,6 +63,29 @@ router.patch("/settings", (req, res) => {
   res.json(settings);
 });
 
+// ---------------- Detections ----------------
+
+// The latest detections across all of the account's units, newest first, for the app's
+// "Recent Alerts" list (live ones arrive as sensor_event pushes). ts is ISO 8601 UTC.
+router.get("/events", (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+  const rows = db
+    .prepare(
+      `SELECT e.id, e.device_id, e.alert_mode_active, e.ts FROM sensor_events e
+         JOIN devices d ON d.device_id = e.device_id
+       WHERE d.owner_user_id = ? ORDER BY e.id DESC LIMIT ?`
+    )
+    .all(req.user.id, limit);
+  res.json(
+    rows.map((e) => ({
+      id: e.id,
+      device_id: e.device_id,
+      alert_mode_active: !!e.alert_mode_active,
+      ts: e.ts.replace(" ", "T") + "Z", // SQLite datetime('now') is UTC
+    }))
+  );
+});
+
 // ---------------- Saved WiFi networks ----------------
 
 // Same limits the unit's WiFi stack enforces: SSID up to 32 bytes; WPA2

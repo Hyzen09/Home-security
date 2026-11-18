@@ -11,15 +11,19 @@ const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 db.pragma("foreign_keys = ON");
 
-// Bump to start from an empty database when the data model changes
-// incompatibly. v2 = prototype 2 (traffic-light + buzzer + radar hardware,
-// saved WiFi networks, session tokens); all prototype-1 data is discarded.
-// v3 = empty-room calibration removed (its devices columns are gone); all v2
-// data is discarded.
-// v4 = no model change: a deliberate clean slate (2026-11-01) so connectivity
-// could be re-tested from a fresh account and a freshly flashed unit.
-const SCHEMA_VERSION = 4;
-if (db.pragma("user_version", { simple: true }) < SCHEMA_VERSION) {
+// Data models before v4 are incompatible: start from an empty database.
+// v2 = prototype 2 (traffic-light + buzzer + radar hardware, saved WiFi networks,
+// session tokens); v3 = empty-room calibration removed; v4 = a deliberate clean
+// slate (2026-11-01) so connectivity could be re-tested from a fresh account.
+// v5 (2026-11-18) = accounts are username + password instead of name + phone. The
+// old accounts (and their sessions, saved WiFi and detection history) are dropped,
+// but the units are KEPT: their rows hold the device_secret burned into each unit,
+// so they need no re-flash. Each unit that had an owner is unclaimed and marked
+// reset_pending, so it factory-resets itself the next time it talks to us (mqtt.js)
+// and shows up in Add Device again.
+const SCHEMA_VERSION = 5;
+const storedVersion = db.pragma("user_version", { simple: true });
+if (storedVersion < 4) {
   db.exec(`
     DROP TABLE IF EXISTS sessions;
     DROP TABLE IF EXISTS wifi_networks;
@@ -27,17 +31,35 @@ if (db.pragma("user_version", { simple: true }) < SCHEMA_VERSION) {
     DROP TABLE IF EXISTS devices;
     DROP TABLE IF EXISTS users;
   `);
-  db.pragma(`user_version = ${SCHEMA_VERSION}`);
   console.log(`[db] reset to schema v${SCHEMA_VERSION}`);
+} else if (storedVersion < 5) {
+  db.transaction(() => {
+    // Release the units first: devices.owner_user_id references users.
+    const { changes } = db
+      .prepare(
+        `UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, relay1_name = NULL,
+           relay2_name = NULL, reset_pending = 1
+         WHERE owner_user_id IS NOT NULL OR status = 'claimed'`
+      )
+      .run();
+    db.exec(`
+      DELETE FROM sensor_events;
+      DROP TABLE IF EXISTS sessions;
+      DROP TABLE IF EXISTS wifi_networks;
+      DROP TABLE IF EXISTS users;
+    `);
+    console.log(`[db] migrated to schema v5 (username + password accounts); ${changes} unit(s) released to reset`);
+  })();
 }
+if (storedVersion < SCHEMA_VERSION) db.pragma(`user_version = ${SCHEMA_VERSION}`);
 
 db.exec(`
--- phone is the account's unique identity (two people can share a name);
--- login requires name + phone to match. settings is a JSON object.
+-- username is the login, unique ignoring case (kept as typed for display).
+-- password_hash is "scrypt:<salt hex>:<hash hex>" (passwords.js). settings is a JSON object.
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  phone TEXT UNIQUE NOT NULL,
+  username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  password_hash TEXT NOT NULL,
   settings TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

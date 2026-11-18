@@ -111,10 +111,10 @@ The database is not backed up (a deliberate choice). It survives deploys and reb
 lives in a Docker volume, but it is lost if the volume or the instance is deleted. Never run
 `docker compose down -v` or `docker volume rm` on the server.
 
-## Database (schema v4, prototype 2)
+## Database (schema v5, prototype 2)
 
 SQLite tables (`backend/src/db.js`):
-- `users` — name, unique phone, `settings` JSON (`alert_tone`, `alarm_schedule` = Alert Mode's night schedule; defaults in `user-view.js`)
+- `users` — `username` (unique, case-insensitive), `password_hash` (scrypt, `passwords.js`), `settings` JSON (`alert_tone`, `alarm_schedule` = Alert Mode's night schedule; defaults in `user-view.js`)
 - `sessions` — SHA-256 of each random bearer token → user (logout deletes; no expiry yet)
 - `wifi_networks` — the account's saved WiFi networks (SSID + password, plain text), unique per user
 - `devices` — unit identity/secret, owner, name, the owner's `relay1_name`/`relay2_name` (NULL = the app's default,
@@ -133,6 +133,12 @@ database's, the backend **drops all tables and starts empty** on its next start 
 data was truncated on 2026-10-30; v3 wiped prototype-2 data on 2026-10-31 when the empty-room calibration
 columns were removed; v4 wiped everything on 2026-11-01 for a from-scratch connectivity test). Only bump it when you mean to wipe production. A wipe also deletes the units'
 identities, so every unit has to be re-registered and re-flashed with `tools/flash-device.sh`.
+
+**v5 (2026-11-18) is the exception: it replaced the accounts and kept the units.** Login moved from name + phone to username +
+password, so the v4→v5 step in `db.js` drops `users`, `sessions`, `wifi_networks` and `sensor_events` but keeps every `devices`
+row (and so every unit's `device_secret`: no re-flashing). Each unit that had an owner is unclaimed with `reset_pending = 1`, so
+it factory-resets itself the next time it talks to the backend and shows up under Add Device again. Use the same pattern (a
+targeted step for one version) whenever only part of the data has to go.
 
 **Database admin.** `http://<server>:4000/admin` is a web page to view and add/edit/delete rows in every table
 (`backend/src/routes/admin.js`, `admin.html`). It is **off until** `ADMIN_USER` and `ADMIN_PASSWORD` are set in
@@ -211,7 +217,7 @@ line from `authorized_keys`. Never paste a private key into chat, issues, or log
 
 ## Known gaps before real users (prototype shortcuts)
 
-- Login is name + phone with no OTP; sessions never expire.
+- Login is username + password, but over plain HTTP (no TLS), and sessions never expire. Wrong-password lockout is in memory only.
 - Saved WiFi passwords are stored in plain text and sent over plain HTTP (no HTTPS on the API yet).
 - Mosquitto allows anonymous clients, no TLS (`mosquitto/mosquitto.conf`), and is open to the internet —
   which is why WiFi passwords are never sent over MQTT (changing a unit's network = reset + re-add).

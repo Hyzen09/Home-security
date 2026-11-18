@@ -4,7 +4,7 @@
 (v2.4.0; all versions on the [Releases](https://github.com/Hyzen09/Home-security/releases) page).
 
 A home-security prototype. Each **unit** is an ESP32 with a 24 GHz radar (detects whether someone is in the room) and two
-relays. An **Android app** shows every unit live with its WiFi signal strength, switches its two relays (named after their
+relays. An **Android app** (*Digi Guard*) shows every unit live with its WiFi signal strength, switches its two relays (named after their
 pins, D19 and D21, until renamed in the app), and arms an *Alert Mode* that rings the phone the instant the radar sees someone
 new, even when the app is closed. Alert Mode is on by default; when it is switched off, a **night schedule** turns it on
 anyway every day (10 PM–7 AM by default, adjustable in the app's Settings). The unit's remaining pins run the customer's own code. A **cloud backend** (Node.js +
@@ -114,10 +114,11 @@ retrying and its alarm and custom code keep working locally) — see "What's ver
 | Route | Auth | Purpose |
 |---|---|---|
 | `GET /health` | — | `{ok, mqtt}` — `mqtt` is the backend's own link to the broker |
-| `POST /auth/register` · `/auth/login` · `/auth/logout` | — / Bearer | name + phone (**no OTP**) → token |
+| `POST /auth/register` · `/auth/login` · `/auth/logout` | — / Bearer | `{username, password}` → token. Username 3–32 of `A-Z a-z 0-9 . _ -`, unique ignoring case; password ≥ 8 chars (scrypt-hashed). Login: one 401 for unknown user or wrong password; 10 wrong passwords lock that username for 15 min (429) |
+| `GET /me/events?limit=` | Bearer | latest detections across all the account's units, newest first, `ts` ISO UTC (the app's Recent Alerts) |
 | `GET /me` · `PATCH /me/settings` | Bearer | profile, `alert_tone`, `alarm_schedule {enabled, start_min, end_min, tz_offset_min}` (sent to every unit) |
 | `GET/POST /me/wifi-networks` · `PATCH/DELETE /me/wifi-networks/:id` | Bearer | saved 2.4 GHz networks (8–63 char password, or empty) |
-| `GET /devices` · `GET /devices/:id` | Bearer | list, one unit (with `online`, `rssi`, `relay1`/`relay2`, names) |
+| `GET /devices` · `GET /devices/:id` | Bearer | list, one unit (with `online`, `rssi`, `relay1`/`relay2`, names; `relay1_pin`/`relay2_pin` = the pins the unit reported, null = ESP32 D19/D21) |
 | `PATCH /devices/:id` | Bearer | rename: any of `name` (1–40), `relay1_name`, `relay2_name` (≤ 24; empty = the pin name) |
 | `PATCH /devices/:id/outputs/:output` | Bearer | `relay1` (D19) `relay2` (D21) — 409 if offline |
 | `PATCH /devices/:id/alert-mode` | Bearer | arm / disarm — 409 if offline |
@@ -135,12 +136,13 @@ retrying and its alarm and custom code keep working locally) — see "What's ver
 
 **WebSocket** (`/ws?token=…`): `device_state`, `device_status`, `device_rssi`, `sensor_event`, `device_removed`, `hb`.
 
-## Data model (schema v4)
+## Data model (schema v5)
 
-`users` (name, unique phone, settings) · `sessions` (SHA-256 of each token) · `wifi_networks` (per user, **password in plain
+`users` (username unique ignoring case, scrypt `password_hash`, settings) · `sessions` (SHA-256 of each token) · `wifi_networks` (per user, **password in plain
 text**) · `devices` (id, secret, owner, name, relay names, status, `wifi_ssid`, `last_seen`, `rssi`, relay/alarm/presence
 state, `reset_pending`) · `sensor_events`. `PRAGMA user_version` holds the schema version; **bumping `SCHEMA_VERSION` in `db.js`
-drops every table** (the documented way to wipe production — all units must then be re-flashed). Details in
+drops every table** (the documented way to wipe production — all units must then be re-flashed); v5 instead replaced only the
+accounts and kept the units (see DEPLOYMENT.md). Details in
 [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Setting up the project (prototype 2)
@@ -231,7 +233,8 @@ cd firmware && .pio-venv/bin/pio run -e esp32dev -t upload --upload-port /dev/cu
 ### 5. Add the unit in the app
 
 1. Install the APK from the link at the top (Android only — iOS can't scan for WiFi networks).
-2. Sign up with a name and phone number (no OTP), then save your home WiFi in the app. It must be a **2.4 GHz** network; the ESP32
+2. Register with a username and password, then save your home WiFi in the app ("Skip for now" lets you add it later, from
+   Settings or while adding the first unit). It must be a **2.4 GHz** network; the ESP32
    can't join 5 GHz. When you tap Save, the phone briefly joins the network with the password you typed, so a wrong password is
    caught immediately (Android asks you to tap **Connect** once; "Save anyway" is offered if the network is out of the phone's range).
 3. **Add device**: the app finds the `SECURE-<device_id>` hotspot, joins it, and hands the unit your WiFi and account. The unit reboots
@@ -334,7 +337,7 @@ offline, a wrong WiFi password reaching the unit, a 5 GHz-only network, and any 
 
 ## Known gaps
 
-- **Security (prototype shortcuts, must be fixed before real users):** login is name + phone with **no OTP** and sessions never
+- **Security (prototype shortcuts, must be fixed before real users):** login is username + password over **plain HTTP** and sessions never
   expire; **no TLS** on HTTP, MQTT or WebSocket; saved WiFi passwords are **plain text** in SQLite and travel over HTTP; the broker is
   **anonymous and public**, so anyone who knows a `device_id` can publish control commands (identity/reset changes are protected,
   control is not); no database backups; single instance.
@@ -416,7 +419,7 @@ cd app && flutter pub get
 flutter run -d chrome          # or: flutter run (lists Android/iOS/other devices)
 ```
 
-Register in the app with any name/phone — you're logged in immediately, no OTP.
+Register in the app with a username and password — you're logged in immediately.
 You'll then be asked for your home WiFi name/password (saved only on this
 device/browser) before reaching the dashboard. The "Add Device" nearby-search flow
 needs a real **Android** device (WiFi scan/join isn't available in a browser or on
