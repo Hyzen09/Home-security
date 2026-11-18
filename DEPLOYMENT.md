@@ -226,8 +226,8 @@ line from `authorized_keys`. Never paste a private key into chat, issues, or log
 ## Android app download (GitHub Releases)
 
 The app source (`app/`) isn't in this repo, but its APK is published as a release asset.
-Permanent link to the newest version (works as long as the asset is named `home-security.apk`):
-`https://github.com/Hyzen09/Home-security/releases/latest/download/home-security.apk`
+Permanent link to the newest version (works as long as the asset is named `digi-guard.apk`):
+`https://github.com/Hyzen09/Home-security/releases/latest/download/digi-guard.apk`
 
 Publish a new version from the maintainer's Mac (bump `version:` in `app/pubspec.yaml` first) with `tools/release-app.sh`.
 It builds the release APK **explicitly against production** (`--dart-define=BACKEND_HOST=13.206.228.27`) and refuses to bless
@@ -240,13 +240,15 @@ tools/release-app.sh --publish app-vX.Y.Z --notes-file notes.md [--allow-debug-s
 ```
 Checks: version matches `pubspec.yaml`; not debuggable; signature and zipalign verify; **every ABI's `libapp.so` contains
 `13.206.228.27:4000` and no `192.168.x.x` / `127.0.0.1` / `localhost` / `10.0.2.2` backend address**. `--publish` creates the
-release with the asset named `home-security.apk` (this keeps the permanent link above working) and then compares GitHub's stored
+release with the asset named `digi-guard.apk` (this keeps the permanent link above working) and then compares GitHub's stored
 SHA-256 with the local build. A debug-signed APK needs `--allow-debug-signing` to be published, so it is a conscious choice.
-Current published release: **app-v2.4.0** (2026-11-02, release-signed; a release-signed v2.3.0 was published and then deleted
-again on 2026-11-01, and v2.2.0 and older are debug-signed, so updating from them needs one uninstall).
+Current published release: **app-v1.0.0, "Digi Guard 1.0"** (2026-11-18, release-signed, `versionCode` 8). On 2026-11-18 every
+earlier release and its tag (app-v1.0.0 … app-v2.4.0, the "Home Security" app) was deleted and numbering restarted at 1.0.0 for the
+Digi Guard name. `versionName` restarted but `versionCode` must keep growing (Android refuses a lower one over an installed app),
+so the next release is e.g. `1.0.1+9`.
 
 Manual equivalent (what the script automates): `flutter build apk --release --dart-define=BACKEND_HOST=13.206.228.27`, then
-`gh release create app-vX.Y.Z home-security.apk --repo Hyzen09/Home-security --target main --notes-file notes.md`, then
+`gh release create app-vX.Y.Z digi-guard.apk --repo Hyzen09/Home-security --target main --notes-file notes.md`, then
 `gh api repos/Hyzen09/Home-security/releases/tags/app-vX.Y.Z --jq '.assets[0].digest'` against `shasum -a 256`.
 
 **Release signing.** A dedicated release keystore exists, `~/Documents/home-security-release.jks` (alias `home-security`, RSA 2048,

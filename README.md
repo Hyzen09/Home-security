@@ -1,7 +1,7 @@
 # Home Security — IoT prototype
 
-**Android app:** [download the latest APK](https://github.com/Hyzen09/Home-security/releases/latest/download/home-security.apk)
-(v2.4.0; all versions on the [Releases](https://github.com/Hyzen09/Home-security/releases) page).
+**Android app (Digi Guard):** [download the latest APK](https://github.com/Hyzen09/Home-security/releases/latest/download/digi-guard.apk)
+(v1.0.0; [Releases](https://github.com/Hyzen09/Home-security/releases) page).
 
 A home-security prototype. Each **unit** is an ESP32 with a 24 GHz radar (detects whether someone is in the room) and two
 relays. An **Android app** (*Digi Guard*) shows every unit live with its WiFi signal strength, switches its two relays (named after their
