@@ -1,9 +1,9 @@
 // Shared device shape for API responses and live pushes, so devices.js,
 // provisioning.js and mqtt.js don't drift out of sync.
-export const OUTPUTS = ["relay1", "relay2"]; // pins D19, D21 on the ESP32 unit
+export const OUTPUTS = ["relay1", "relay2", "relay3"]; // pins D19, D21, D18 on the ESP32 unit
 
 // The owner's names for a unit's relays (PATCH /devices/:id); null = the app's default (the pin name).
-export const LABELS = ["relay1_name", "relay2_name"];
+export const LABELS = ["relay1_name", "relay2_name", "relay3_name"];
 export const LABEL_MAX = 24;
 
 // A unit counts as online while it has been heard from recently. The backend
@@ -33,12 +33,15 @@ export function toPublicDevice(row) {
     // The owner's name, else the pin name the unit reported, else null (the app's default).
     relay1_name: row.relay1_name ?? row.relay1_pin ?? null,
     relay2_name: row.relay2_name ?? row.relay2_pin ?? null,
+    relay3_name: row.relay3_name ?? row.relay3_pin ?? null,
     // The pins the relays are on, as the unit reported them; null = not reported (the ESP32
-    // firmware: D19, D21). Lets the app tell the owner's own names from the pin names.
+    // firmware: D19, D21, D18). Lets the app tell the owner's own names from the pin names.
     relay1_pin: row.relay1_pin ?? null,
     relay2_pin: row.relay2_pin ?? null,
+    relay3_pin: row.relay3_pin ?? null,
     relay1: !!row.relay1_state,
     relay2: !!row.relay2_state,
+    relay3: !!row.relay3_state,
     // WiFi signal strength in dBm, refreshed by every heartbeat (about every 5 s).
     rssi: online ? row.rssi : null,
     // What the radar sees is only meaningful while the unit is reachable; for a

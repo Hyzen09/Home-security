@@ -3,9 +3,9 @@
 **Android app (Digi Guard):** [download the latest APK](https://github.com/Hyzen09/Home-security/releases/latest/download/digi-guard.apk)
 (v1.0.0; [Releases](https://github.com/Hyzen09/Home-security/releases) page).
 
-A home-security prototype. Each **unit** is an ESP32 with a 24 GHz radar (detects whether someone is in the room) and two
-relays. An **Android app** (*Digi Guard*) shows every unit live with its WiFi signal strength, switches its two relays (named after their
-pins, D19 and D21, until renamed in the app), and arms an *Alert Mode* that rings the phone the instant the radar sees someone
+A home-security prototype. Each **unit** is an ESP32 with two sensor inputs (e.g. a 24 GHz radar that detects whether someone
+is in the room) and three relays. An **Android app** (*Digi Guard*) shows every unit live with its WiFi signal strength, switches its three relays (named after their
+pins, D19, D21 and D18, until renamed in the app), and arms an *Alert Mode* that rings the phone the instant a sensor sees someone
 new, even when the app is closed. Alert Mode is on by default; when it is switched off, a **night schedule** turns it on
 anyway every day (10 PM–7 AM by default, adjustable in the app's Settings). The unit's remaining pins run the customer's own code. A **cloud backend** (Node.js +
 Mosquitto on AWS EC2) sits between them so it works from anywhere, with the app on mobile data and the unit behind a home router.
@@ -21,7 +21,7 @@ Mosquitto on AWS EC2) sits between them so it works from anywhere, with the app 
  HOME NETWORK                                    INTERNET            AWS EC2 · Docker Compose
 ┌────────────────────────────────┐                              ┌────────────────────────────────────────┐
 │ SECURITY UNIT (ESP32)          │── MQTT :1883 ───────────────▶│ MOSQUITTO 2                            │
-│  radar · 2 relays · custom     │   state (retained), events   │  anonymous · no TLS · no persistence   │
+│  2 inputs · 3 relays · custom  │   state (retained), events   │  anonymous · no TLS · no persistence   │
 │  pins · BOOT button            │◀──────────────────────────── │                                        │
 │                                │   commands                   └───────────────▲────────────────────────┘
 │                                │                                              │ MQTT client
@@ -40,7 +40,7 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 
 **Design rules**
 
-1. **The alarm is decided on the unit.** Armed + radar HIGH → alarm, in milliseconds, without asking the cloud; the cloud
+1. **The alarm is decided on the unit.** Armed + someone there → alarm, in milliseconds, without asking the cloud; the cloud
    carries it to the phone. The customer's own code (`onPersonDetected()`) runs on the unit at the same moment.
 2. **The unit is the source of truth for its own state.** The backend shows what the unit last *reported*; a command is only
    reflected once the unit confirms it.
@@ -54,7 +54,7 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 
 | Part | Where | What it does |
 |---|---|---|
-| Security unit | `firmware/` (local) | ESP32 DevKit, Arduino/PlatformIO. Radar OT2 on D4 (a plain HIGH/LOW pin), relay 1 on D19, relay 2 on D21, BOOT button; every other free pin (D18 and D22 included) is for the customer's code. Runs the alarm, MQTT, and the setup hotspot |
+| Security unit | `firmware/` (local) | ESP32 DevKit, Arduino/PlatformIO. Input 1 on D4 (LOW → HIGH = someone, e.g. the radar's OT2), input 2 on D5 (HIGH → LOW = someone), relay 1 on D19, relay 2 on D21, relay 3 on D18, BOOT button; every other free pin is for the customer's code. Runs the alarm, MQTT, and the setup hotspot |
 | Backend | `backend/` | Express REST API, MQTT bridge, WebSocket push, SQLite. Online/offline tracking, saved WiFi networks, unit registry |
 | MQTT broker | `mosquitto/` | Eclipse Mosquitto 2 carrying `devices/<id>/commands · state · events` |
 | Android app | `app/` (local), APK on Releases | Flutter. Login, saved WiFi, dashboard (live signal, Alert Mode, renameable relays), night schedule, Add Device, alarm tone/notification, background service that rings even with the app closed |
@@ -70,7 +70,7 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 - **Control.** App `PATCH /devices/:id/outputs/relay1` → backend publishes `output_set` → unit switches the pin and publishes its
   retained `state` → backend stores it and pushes `device_state` over the WebSocket (≈0.3 s round trip). Commands to an
   offline unit are refused with HTTP 409.
-- **Alarm.** Radar OT2 goes HIGH while armed → the unit sets its alarm **immediately** and runs the customer's `onPersonDetected()`
+- **Alarm.** Input 1 goes HIGH or input 2 goes LOW while armed → the unit sets its alarm **immediately** and runs the customer's `onPersonDetected()`
   → `sensor_trigger` + state published → the phone plays its alarm tone and shows a notification with Stop (from the app's
   background service, so also when the app is closed) → Stop ends it, the unit stays armed.
 - **Online / offline + signal.** Backend pings every unit every 5 s, the unit answers with a heartbeat carrying its WiFi RSSI;
@@ -118,9 +118,9 @@ retrying and its alarm and custom code keep working locally) — see "What's ver
 | `GET /me/events?limit=` | Bearer | latest detections across all the account's units, newest first, `ts` ISO UTC (the app's Recent Alerts) |
 | `GET /me` · `PATCH /me/settings` | Bearer | profile, `alert_tone`, `alarm_schedule {enabled, start_min, end_min, tz_offset_min}` (sent to every unit) |
 | `GET/POST /me/wifi-networks` · `PATCH/DELETE /me/wifi-networks/:id` | Bearer | saved 2.4 GHz networks (8–63 char password, or empty) |
-| `GET /devices` · `GET /devices/:id` | Bearer | list, one unit (with `online`, `rssi`, `relay1`/`relay2`, names; `relay1_pin`/`relay2_pin` = the pins the unit reported, null = ESP32 D19/D21) |
+| `GET /devices` · `GET /devices/:id` | Bearer | list, one unit (with `online`, `rssi`, `relay1`/`relay2`/`relay3`, names; `relay1_pin`/`relay2_pin`/`relay3_pin` = the pins the unit reported, null = ESP32 D19/D21/D18) |
 | `PATCH /devices/:id` | Bearer | rename: any of `name` (1–40), `relay1_name`, `relay2_name` (≤ 24; empty = the pin name) |
-| `PATCH /devices/:id/outputs/:output` | Bearer | `relay1` (D19) `relay2` (D21) — 409 if offline |
+| `PATCH /devices/:id/outputs/:output` | Bearer | `relay1` (D19) `relay2` (D21) `relay3` (D18) — 409 if offline |
 | `PATCH /devices/:id/alert-mode` | Bearer | arm / disarm — 409 if offline |
 | `POST /devices/:id/alarm/stop` | Bearer | silence, stay armed |
 | `GET /devices/:id/events` | Bearer | recent detections |
@@ -173,13 +173,14 @@ firmware/.pio-venv/bin/pip install platformio
 | Part | ESP32 pin | Notes |
 |---|---|---|
 | Radar VCC / GND | 3V3 / GND | Ai-Thinker Rd-03L_V2 |
-| Radar OT2 | D4 (GPIO4) | digital output: HIGH while it sees someone, LOW when not. The radar's OT1 and RX pins are not connected |
-| Relay 1 / relay 2 (switched from the app) | D19 / D21 | HIGH = on (`RELAY_ACTIVE_LOW=1` in `esp-install.sh` for boards that switch on LOW) |
-| Default sequence outputs | 25 / 27 + 32 / 26 | while the radar sees someone: 25 on; 27 and 32 take turns 5 s each for 2 min; then 26 on until it clears (all off on clear). It is the default "YOUR PIN LOGIC" in `tools/esp-install.sh` |
+| Input 1 (e.g. radar OT2) | D4 (GPIO4) | LOW → HIGH = someone there (the radar's OT2 is HIGH while it sees someone; its OT1 and RX pins are not connected). Pulled down: unconnected = nobody |
+| Input 2 | D5 (GPIO5) | HIGH → LOW = someone there (a sensor or switch that connects it to GND). Pulled up: unconnected = nobody. Someone is there while either input says so |
+| Relay 1 / relay 2 / relay 3 (switched from the app) | D19 / D21 / D18 | HIGH = on (`RELAY_ACTIVE_LOW=1` in `esp-install.sh` for boards that switch on LOW) |
+| Default sequence outputs | 25 / 27 + 32 / 26 | while someone is there: 25 on; 27 and 32 take turns 5 s each for 2 min; then 26 on until it clears (all off on clear). It is the default "YOUR PIN LOGIC" in `tools/esp-install.sh` |
 | Anything else (buzzer, lamps, sensors) | 13 14 16 17 18 22 23 33 (34–39 input only) | the customer's code, see "YOUR PIN LOGIC" in `tools/esp-install.sh` |
 | BOOT button (on the board) | GPIO0 | hold 5 s = factory reset |
 
-The unit reads that one wire and nothing else from the radar — there is no serial link to it.
+The unit reads one wire from the radar and nothing else — there is no serial link to it.
 
 ### 3. Run the backend
 
@@ -216,10 +217,10 @@ the boot log to confirm it is hosting its `SECURE-<device_id>` hotspot.
 **Testing the pin logic** — `tools/esp-test.sh`:
 ```bash
 tools/esp-test.sh            # simulate YOUR PIN LOGIC on the Mac (fake clock, seconds) and check it
-tools/esp-test.sh --board    # print the real board's [pins] log live and check every radar trigger
+tools/esp-test.sh --board    # print the real board's [pins] log live and check every trigger
 ```
-The firmware prints every radar and output-pin change as a `[pins]` line (`[pins] 12.345s GPIO25 HIGH`), and the
-radar and pin logic run from power-up, before the unit is added in the app.
+The firmware prints every input and output-pin change as a `[pins]` line (`[pins] 12.345s GPIO25 HIGH`), and the
+inputs and pin logic run from power-up, before the unit is added in the app.
 
 ### 5. Add the unit in the app
 
@@ -239,12 +240,14 @@ every unit every 5 s, so an unplugged unit shows Offline within about 15 seconds
 retrying the saved network by itself and goes back to Online once it's in. You can also hold the BOOT button
 for 5 seconds to factory-reset a unit: it forgets its WiFi and owner and shows up in setup mode again.
 
-### 6. The radar
+### 6. The inputs
 
-The unit treats the radar as a switch: OT2 (D4) HIGH = someone is there, LOW = nobody. Nothing about the radar is
-configured from the app or the firmware; its range, sensitivity and no-person delay are whatever is saved in the
-radar module itself. To watch it, open the serial monitor (115200 baud): the unit prints `[radar] ready, OT2 (D4) reads …`
-once it has warmed up (3 s), then `[radar] PERSON DETECTED (HIGH)` / `[radar] nobody (LOW)` on every change.
+The unit treats both inputs as switches: someone is there while input 1 (D4) is HIGH **or** input 2 (D5) is LOW. The
+radar on input 1 is not configured from the app or the firmware; its range, sensitivity and no-person delay are whatever
+is saved in the radar module itself. To watch them, open the serial monitor (115200 baud): the unit prints
+`[sensor] ready: input 1 (GPIO4) reads …, input 2 (GPIO5) reads …` once it has warmed up (3 s), then
+`[sensor] input 1 (GPIO4) went HIGH: someone` etc. on every change, and `[sensor] SOMEONE THERE` / `[sensor] nobody (both
+inputs clear)` when the combined state changes.
 
 ### 7. Build the Android app
 
@@ -277,7 +280,7 @@ DEVICE_ID=<device_id> DEVICE_SECRET=<device_secret> OWNER_USER_ID=<your app user
 | The script refuses `127.0.0.1` | give `--backend-url` the Mac's LAN IP (local backend) or the server's public IP |
 | The app says the unit "hasn't checked in yet" and the unit's light blinks fast | the unit joined your WiFi (so the password is fine) but the server rejected it: unknown device (it was flashed before a database reset or against another backend) or wrong owner. Hold BOOT for 5 s; if it still blinks fast, re-flash it with `tools/esp-install.sh --new` |
 | A unit's hotspot never appears in the app | it is already set up or offline — hold BOOT for 5 s to reset it; check the 2.4 GHz WiFi rule above |
-| The app says someone is there when the room is empty | watch the serial monitor: if `[radar]` prints `PERSON DETECTED (HIGH)` the radar's own OT2 output is HIGH (check what it sees, and that OT2 is wired to D4); the radar's sensitivity lives in the module itself |
+| The app says someone is there when the room is empty | watch the serial monitor: `[sensor] input 1 … went HIGH` = the radar's OT2 output is HIGH (check what it sees, and that OT2 is wired to D4; its sensitivity lives in the module itself); `input 2 … went LOW` = something pulls D5 to GND (an unconnected D5 reads clear) |
 | A flashed unit is rejected after the database was reset | a schema bump (see DEPLOYMENT.md → Database) deletes every registered unit; run `tools/esp-install.sh --new` again |
 | The app says "No nearby devices found yet" but the unit's light blinks slowly | Android rate-limits the app's WiFi scan. Wait a minute and press Search again |
 | "Couldn't join SECURE-…" while adding a unit | try again — the unit's periodic WiFi scan (every 5 min) can interrupt a phone that is connecting at that moment |

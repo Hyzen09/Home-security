@@ -7,14 +7,14 @@ import { scheduleForDevice } from "./user-view.js";
 const BROKER_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 
 // Device protocol (firmware/src/main.ino, simulator/device-sim.js):
-//   devices/{id}/commands  <- {type:"output_set", output:"relay1"|"relay2", state}
+//   devices/{id}/commands  <- {type:"output_set", output:"relay1"|"relay2"|"relay3", state}
 //                             {type:"alert_mode_set", active}
 //                             {type:"alarm_stop"}  (silence; stays armed)
 //                             {type:"ping"}  (every 5 s; the unit answers with a heartbeat event)
 //                             {type:"schedule_set", enabled, start_min, end_min, tz_offset_min}
 //                               (the owner's night alarm; sent whenever the unit comes online and on change)
 //                             {type:"sync"}  (the unit was removed in the app: it asks POST /provisioning/status and resets)
-//   devices/{id}/state     -> {relay1, relay2, alarm, presence, alert_mode_active (the alarm switch),
+//   devices/{id}/state     -> {relay1, relay2, relay3, alarm, presence, alert_mode_active (the alarm switch),
 //                              schedule_active (the night alarm is arming it now), uptime_ms} (retained)
 //   devices/{id}/events    -> {type:"sensor_trigger"} on each new presence detection,
 //                             {type:"heartbeat", rssi} (answers each ping; rssi = WiFi signal, dBm)
@@ -126,12 +126,13 @@ client.on("message", (topic, payloadBuf, packet) => {
 
   if (topic.endsWith("/state")) {
     db.prepare(
-      `UPDATE devices SET relay1_state = ?, relay2_state = ?, alarm_state = ?, presence = ?, alert_mode_active = ?,
+      `UPDATE devices SET relay1_state = ?, relay2_state = ?, relay3_state = ?, alarm_state = ?, presence = ?, alert_mode_active = ?,
          schedule_active = ?
        WHERE device_id = ?`
     ).run(
       bit(msg.relay1),
       bit(msg.relay2),
+      bit(msg.relay3), // 0 from units flashed before the third relay
       bit(msg.alarm),
       bit(msg.presence),
       bit(msg.alert_mode_active),
@@ -149,6 +150,7 @@ client.on("message", (topic, payloadBuf, packet) => {
         device_id: deviceId,
         relay1: !!msg.relay1,
         relay2: !!msg.relay2,
+        relay3: !!msg.relay3,
         alarm: !!msg.alarm,
         presence: !!msg.presence,
         alert_mode_active: !!msg.alert_mode_active,

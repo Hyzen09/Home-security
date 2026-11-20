@@ -42,11 +42,14 @@ router.post("/claim-device", (req, res) => {
   const wifiSsid = typeof req.body.wifi_ssid === "string" ? req.body.wifi_ssid.slice(0, 32) : null;
   // Optional: the pins the unit's relays are on, used as their default names in the app.
   const pinName = (v) => (typeof v === "string" && /^[A-Za-z0-9]{1,8}$/.test(v) ? v : null);
-  const relayPins = [pinName(req.body.relay1_pin), pinName(req.body.relay2_pin)];
+  const relayPins = [pinName(req.body.relay1_pin), pinName(req.body.relay2_pin), pinName(req.body.relay3_pin)];
   const saveRelayPins = () =>
     db
-      .prepare("UPDATE devices SET relay1_pin = coalesce(?, relay1_pin), relay2_pin = coalesce(?, relay2_pin) WHERE device_id = ?")
-      .run(relayPins[0], relayPins[1], device.device_id);
+      .prepare(
+        `UPDATE devices SET relay1_pin = coalesce(?, relay1_pin), relay2_pin = coalesce(?, relay2_pin),
+           relay3_pin = coalesce(?, relay3_pin) WHERE device_id = ?`
+      )
+      .run(relayPins[0], relayPins[1], relayPins[2], device.device_id);
 
   const owner = db.prepare("SELECT * FROM users WHERE id = ?").get(owner_user_id);
   if (!owner) return res.status(404).json({ error: "unknown owner_user_id" });
@@ -97,8 +100,8 @@ router.post("/reset-device", (req, res) => {
     db.prepare("DELETE FROM sensor_events WHERE device_id = ?").run(device.device_id);
     db.prepare(
       `UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, wifi_ssid = NULL,
-         last_seen = NULL, alert_mode_active = 0, relay1_state = 0, relay2_state = 0, alarm_state = 0,
-         presence = 0, schedule_active = 0, rssi = NULL, relay1_name = NULL, relay2_name = NULL,
+         last_seen = NULL, alert_mode_active = 0, relay1_state = 0, relay2_state = 0, relay3_state = 0, alarm_state = 0,
+         presence = 0, schedule_active = 0, rssi = NULL, relay1_name = NULL, relay2_name = NULL, relay3_name = NULL,
          reset_pending = 0
        WHERE device_id = ?`
     ).run(device.device_id);

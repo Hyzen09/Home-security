@@ -84,7 +84,7 @@ router.get("/:id/events", (req, res) => {
   res.json(events);
 });
 
-// The two relays the app switches (relay1 = D19, relay2 = D21).
+// The three relays the app switches (relay1 = D19, relay2 = D21, relay3 = D18).
 router.patch("/:id/outputs/:output", (req, res) => {
   const device = ownedDeviceOr404(req, res);
   if (!device) return;
@@ -131,7 +131,7 @@ router.delete("/:id", (req, res) => {
   if (!device) return;
   db.prepare(
     `UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, relay1_name = NULL, relay2_name = NULL,
-       reset_pending = 1 WHERE device_id = ?`
+       relay3_name = NULL, reset_pending = 1 WHERE device_id = ?`
   ).run(device.device_id);
   requestSync(device.device_id);
   res.json({ ok: true });
