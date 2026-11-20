@@ -58,8 +58,8 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 | Backend | `backend/` | Express REST API, MQTT bridge, WebSocket push, SQLite. Online/offline tracking, saved WiFi networks, unit registry |
 | MQTT broker | `mosquitto/` | Eclipse Mosquitto 2 carrying `devices/<id>/commands · state · events` |
 | Android app | `app/` (local), APK on Releases | Flutter. Login, saved WiFi, dashboard (live signal, Alert Mode, renameable relays), night schedule, Add Device, alarm tone/notification, background service that rings even with the app closed |
-| Installer | `tools/esp-install.sh` (local) | One file: installs PlatformIO, registers a unit, flashes it, checks it boots. Its section 2 ("YOUR PIN LOGIC") is where the customer's pin code goes. Step-by-step guide with 8 examples: `tools/ESP-INSTALL-GUIDE.md` / `.docx` (local) |
-| Flash tool | `tools/flash-device.sh` (local) | The older flasher: registers a new unit on every run, builds `firmware/` as is |
+| Installer | `tools/esp-install.sh` (local) | The one flashing tool: installs PlatformIO, registers a unit, flashes it, checks it boots. Its section 2 ("YOUR PIN LOGIC") is where the customer's pin code goes. Step-by-step guide with 8 examples: `tools/ESP-INSTALL-GUIDE.md` / `.docx` (local) |
+| Pin-logic test | `tools/esp-test.sh` (local) | Simulates YOUR PIN LOGIC on the Mac and checks it against the default sequence, or (`--board`) prints and checks the real board's `[pins]` log |
 | Hosting / CI | `docker-compose.prod.yml`, `.github/workflows/deploy.yml` | Push to `main` → GitHub Actions → SSH → rebuild on EC2 |
 
 **Key flows** (message-level detail is in `system_architecture.md` / `flow.svg`, kept locally)
@@ -175,7 +175,8 @@ firmware/.pio-venv/bin/pip install platformio
 | Radar VCC / GND | 3V3 / GND | Ai-Thinker Rd-03L_V2 |
 | Radar OT2 | D4 (GPIO4) | digital output: HIGH while it sees someone, LOW when not. The radar's OT1 and RX pins are not connected |
 | Relay 1 / relay 2 (switched from the app) | D19 / D21 | HIGH = on (`RELAY_ACTIVE_LOW=1` in `esp-install.sh` for boards that switch on LOW) |
-| Anything else (buzzer, lamps, sensors) | 13 14 16 17 18 22 23 25 26 27 32 33 (34–39 input only) | the customer's code, see "YOUR PIN LOGIC" in `tools/esp-install.sh` |
+| Default sequence outputs | 25 / 27 + 32 / 26 | while the radar sees someone: 25 on; 27 and 32 take turns 5 s each for 2 min; then 26 on until it clears (all off on clear). It is the default "YOUR PIN LOGIC" in `tools/esp-install.sh` |
+| Anything else (buzzer, lamps, sensors) | 13 14 16 17 18 22 23 33 (34–39 input only) | the customer's code, see "YOUR PIN LOGIC" in `tools/esp-install.sh` |
 | BOOT button (on the board) | GPIO0 | hold 5 s = factory reset |
 
 The unit reads that one wire and nothing else from the radar — there is no serial link to it.
@@ -190,45 +191,35 @@ The unit reads that one wire and nothing else from the radar — there is no ser
 /opt/homebrew/opt/mosquitto/sbin/mosquitto -c mosquitto/mosquitto.conf -d   # broker on :1883
 cd backend && cp .env.example .env && npm install && npm run dev            # API on :4000
 ```
-`backend/.env` holds `MANUFACTURING_KEY`, the secret that lets `tools/flash-device.sh` register new units.
+`backend/.env` holds `MANUFACTURING_KEY`, the secret that lets `tools/esp-install.sh` register new units.
 
-### 4. Flash a new unit — `tools/flash-device.sh`
+### 4. Flash a unit — `tools/esp-install.sh`
 
-Plug the board in over USB and run:
+`esp-install.sh` is the only flashing tool. Plug the board in over USB and run:
 ```bash
-tools/flash-device.sh                       # production backend (the default)
-tools/flash-device.sh --backend-url http://192.168.1.20:4000   # your local backend: use the Mac's LAN IP
-tools/flash-device.sh --port /dev/cu.usbserial-0001            # if more than one board is plugged in
+tools/esp-install.sh --new --key-file ~/keys/manufacturing-key.txt   # a brand-new unit (new identity, erases the board)
+tools/esp-install.sh --reflash                                       # update the firmware, keep the unit's ID, WiFi and owner
+tools/esp-install.sh --build-only                                    # only check that the code compiles
 ```
 
-| Option | Meaning |
-|---|---|
-| `--backend-url` | backend the unit registers with and later talks to. Defaults to the production server. `127.0.0.1`/`localhost` are rejected — the board can't reach them |
-| `--port` | serial port. Without it the script picks the first `/dev/cu.usbserial*`, `/dev/cu.SLAB_USBtoUART*` or `/dev/cu.wchusbserial*` |
-| `--host` | MQTT/HTTP host for the unit if it differs from the one in `--backend-url` |
+Other options: `--port <port>`, `--backend-url http://<host>:4000` (default: the production server; `127.0.0.1` is
+rejected because the board can't reach it), `--monitor` (serial log afterwards), `--dir <folder>` (one work folder per
+board, default `~/esp-security-unit`). The manufacturing key comes from `--key-file`, `$MANUFACTURING_KEY_FILE`,
+`$MANUFACTURING_KEY`, a `.manufacturing-key` file, or a prompt. It must equal `MANUFACTURING_KEY` in the target backend's
+`.env`. Never commit it. Full guide: `tools/ESP-INSTALL-GUIDE.md`.
 
-**Manufacturing key.** The script asks for it (typing is hidden), or read it from the environment:
-`MANUFACTURING_KEY=... tools/flash-device.sh`. It must equal `MANUFACTURING_KEY` in the target backend's
-`.env` (for a local backend started without a `.env` it is `dev-manufacturing-key`). Never commit it.
+**What `--new` does:** installs PlatformIO into the work folder (first run only), builds `firmware/src/main.ino` (copied
+into the script by `tools/sync-esp-core.sh`) together with section 2, checks the backend's `/health` and the MQTT port,
+registers a new unit (`device_id` + `device_secret`, saved in `identity.env`), erases the board, flashes it, and reads
+the boot log to confirm it is hosting its `SECURE-<device_id>` hotspot.
 
-**What the script does:**
-0. Checks from this Mac that the backend (`/health`) and the MQTT port answer, and refuses to flash if they don't — a unit flashed against an address that can't be reached never connects. It warns when the address is a private LAN IP (that unit only works on that network).
-1. Finds the board's serial port.
-2. Registers a brand-new unit with the backend (`tools/provision-device.js`, running `npm install` in `tools/` first if needed), which returns a `device_id` and `device_secret`.
-3. Writes them, plus the backend address, to `firmware/include/secrets.h` (gitignored — never edit it by hand).
-4. Erases the board's flash, so no WiFi or owner from an earlier flash survives.
-5. Compiles the firmware and uploads it. It also appends a line to `tools/flashed-devices.csv`.
-6. Resets the board and reads its boot log to confirm it came up and is hosting its setup hotspot.
-
-Every run creates a **new identity**. Run it once per physical board, not to update code (see below). When it
-finishes, the unit hosts an open WiFi hotspot called `SECURE-<device_id>` and blinks its status LED slowly,
-waiting for the app.
-
-**Updating the firmware on a unit that is already set up** (keeps its identity, saved WiFi and owner):
+**Testing the pin logic** — `tools/esp-test.sh`:
 ```bash
-cd firmware && .pio-venv/bin/pio run -e esp32dev -t upload --upload-port /dev/cu.usbserial-0001
-.pio-venv/bin/pio device monitor -b 115200 --port /dev/cu.usbserial-0001   # serial log; Ctrl+C before flashing again
+tools/esp-test.sh            # simulate YOUR PIN LOGIC on the Mac (fake clock, seconds) and check it
+tools/esp-test.sh --board    # print the real board's [pins] log live and check every radar trigger
 ```
+The firmware prints every radar and output-pin change as a `[pins]` line (`[pins] 12.345s GPIO25 HIGH`), and the
+radar and pin logic run from power-up, before the unit is added in the app.
 
 ### 5. Add the unit in the app
 
@@ -281,13 +272,13 @@ DEVICE_ID=<device_id> DEVICE_SECRET=<device_secret> OWNER_USER_ID=<your app user
 | "No ESP32 USB-serial device found" | charge-only cable, or the board isn't recognised; try another cable, or pass `--port` (`ls /dev/cu.*` shows what is plugged in) |
 | Upload stops at "Connecting......" or fails with "multiple access on port?" | another program has the serial port — close any serial monitor or logger (`lsof /dev/cu.usbserial-0001`), then retry. If it still can't connect, hold the board's BOOT button as the upload starts |
 | The board reboots every ~2 seconds while a logger is attached | two programs are reading the port; the second one's reconnect pulses the reset line. Keep exactly one reader open |
-| `[provision] failed: 403` | the manufacturing key doesn't match the target backend's `.env` |
+| `Server answered 403` | the manufacturing key doesn't match the target backend's `.env` |
 | "isn't answering" / "MQTT broker ... isn't reachable" at step 0 | the backend or broker can't be reached from this Mac: for production check the EC2 instance and the security group (ports 4000 and 1883, see DEPLOYMENT.md); for a local backend start it first |
 | The script refuses `127.0.0.1` | give `--backend-url` the Mac's LAN IP (local backend) or the server's public IP |
-| The app says the unit "hasn't checked in yet" and the unit's light blinks fast | the unit joined your WiFi (so the password is fine) but the server rejected it: unknown device (it was flashed before a database reset or against another backend) or wrong owner. Hold BOOT for 5 s; if it still blinks fast, re-flash it with `tools/flash-device.sh` |
+| The app says the unit "hasn't checked in yet" and the unit's light blinks fast | the unit joined your WiFi (so the password is fine) but the server rejected it: unknown device (it was flashed before a database reset or against another backend) or wrong owner. Hold BOOT for 5 s; if it still blinks fast, re-flash it with `tools/esp-install.sh --new` |
 | A unit's hotspot never appears in the app | it is already set up or offline — hold BOOT for 5 s to reset it; check the 2.4 GHz WiFi rule above |
 | The app says someone is there when the room is empty | watch the serial monitor: if `[radar]` prints `PERSON DETECTED (HIGH)` the radar's own OT2 output is HIGH (check what it sees, and that OT2 is wired to D4); the radar's sensitivity lives in the module itself |
-| A flashed unit is rejected after the database was reset | a schema bump (see DEPLOYMENT.md → Database) deletes every registered unit; run `tools/flash-device.sh` again |
+| A flashed unit is rejected after the database was reset | a schema bump (see DEPLOYMENT.md → Database) deletes every registered unit; run `tools/esp-install.sh --new` again |
 | The app says "No nearby devices found yet" but the unit's light blinks slowly | Android rate-limits the app's WiFi scan. Wait a minute and press Search again |
 | "Couldn't join SECURE-…" while adding a unit | try again — the unit's periodic WiFi scan (every 5 min) can interrupt a phone that is connecting at that moment |
 | "Couldn't join "<network>" with that password" when saving a WiFi network | the password is wrong, or the network is out of the phone's range; "Save anyway" skips the check |

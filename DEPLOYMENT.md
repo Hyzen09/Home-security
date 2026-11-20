@@ -94,12 +94,12 @@ $C up -d --force-recreate backend
 ```
 A new env var must also be added to `backend/.env.example` in git so the next person knows it exists.
 
-**Finding the `MANUFACTURING_KEY`.** `tools/flash-device.sh` needs it to register a new unit (the server answers 403 without it).
+**Finding the `MANUFACTURING_KEY`.** `tools/esp-install.sh --new` needs it to register a new unit (the server answers 403 without it).
 It lives only in `backend/.env` on the server. Read it straight into a gitignored file without printing it:
 ```bash
 ssh -i ~/Documents/home_security_new ubuntu@13.206.228.27 \
   "grep '^MANUFACTURING_KEY=' /opt/home-security/backend/.env | cut -d= -f2-" > tools/.manufacturing-key
-MANUFACTURING_KEY="$(tr -d '\n' < tools/.manufacturing-key)" tools/flash-device.sh
+tools/esp-install.sh --new --key-file tools/.manufacturing-key
 ```
 If the line is missing the backend falls back to the built-in default `dev-manufacturing-key`. To set a new key, edit `.env`,
 then `$C up -d --force-recreate backend` (the database is kept; already-flashed units don't use the key).
@@ -118,7 +118,7 @@ SQLite tables (`backend/src/db.js`):
 - `sessions` — SHA-256 of each random bearer token → user (logout deletes; no expiry yet)
 - `wifi_networks` — the account's saved WiFi networks (SSID + password, plain text), unique per user
 - `devices` — unit identity/secret, owner, name, the owner's `relay1_name`/`relay2_name` (NULL = the app's default,
-  the pin name), `relay1_pin`/`relay2_pin` (pin names an ESP-12F unit reports when it claims itself, e.g. D2/D3; shown
+  the pin name), `relay1_pin`/`relay2_pin` (pin names the unit reports when it claims itself: D19/D21; shown
   as the relay names until renamed), `wifi_ssid` it claimed on, `rssi` (last reported WiFi signal, dBm), and live state:
   `relay1_state`/`relay2_state`, `alarm_state`, `presence`, `alert_mode_active` (the alarm switch), `schedule_active`
   (the night schedule is arming it now),
@@ -132,7 +132,7 @@ SQLite tables (`backend/src/db.js`):
 database's, the backend **drops all tables and starts empty** on its next start (that's how prototype-1
 data was truncated on 2026-10-30; v3 wiped prototype-2 data on 2026-10-31 when the empty-room calibration
 columns were removed; v4 wiped everything on 2026-11-01 for a from-scratch connectivity test). Only bump it when you mean to wipe production. A wipe also deletes the units'
-identities, so every unit has to be re-registered and re-flashed with `tools/flash-device.sh`.
+identities, so every unit has to be re-registered and re-flashed with `tools/esp-install.sh --new`.
 
 **v5 (2026-11-18) is the exception: it replaced the accounts and kept the units.** Login moved from name + phone to username +
 password, so the v4→v5 step in `db.js` drops `users`, `sessions`, `wifi_networks` and `sensor_events` but keeps every `devices`

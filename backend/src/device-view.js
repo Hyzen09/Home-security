@@ -1,6 +1,6 @@
 // Shared device shape for API responses and live pushes, so devices.js,
 // provisioning.js and mqtt.js don't drift out of sync.
-export const OUTPUTS = ["relay1", "relay2"]; // pins D19, D21 on the ESP32 unit; D2, D3 on the ESP-12F
+export const OUTPUTS = ["relay1", "relay2"]; // pins D19, D21 on the ESP32 unit
 
 // The owner's names for a unit's relays (PATCH /devices/:id); null = the app's default (the pin name).
 export const LABELS = ["relay1_name", "relay2_name"];
@@ -30,7 +30,7 @@ export function toPublicDevice(row) {
     last_seen: row.last_seen,
     online,
     alert_mode_active: !!row.alert_mode_active,
-    // The owner's name, else the unit's pin name (ESP-12F), else null (the app's default).
+    // The owner's name, else the pin name the unit reported, else null (the app's default).
     relay1_name: row.relay1_name ?? row.relay1_pin ?? null,
     relay2_name: row.relay2_name ?? row.relay2_pin ?? null,
     // The pins the relays are on, as the unit reported them; null = not reported (the ESP32
