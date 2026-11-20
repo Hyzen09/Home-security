@@ -218,6 +218,7 @@ the boot log to confirm it is hosting its `SECURE-<device_id>` hotspot.
 ```bash
 tools/esp-test.sh            # simulate YOUR PIN LOGIC on the Mac (fake clock, seconds) and check it
 tools/esp-test.sh --board    # print the real board's [pins] log live and check every trigger
+tools/esp-test.sh --board --simulate   # no sensor needed: drives GPIO4/GPIO5 over USB (test mode) and checks the board
 ```
 The firmware prints every input and output-pin change as a `[pins]` line (`[pins] 12.345s GPIO25 HIGH`), and the
 inputs and pin logic run from power-up, before the unit is added in the app.
