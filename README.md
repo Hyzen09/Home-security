@@ -59,6 +59,7 @@ has to authenticate users, remember state and push alerts. Units connect *out* t
 | MQTT broker | `mosquitto/` | Eclipse Mosquitto 2 carrying `devices/<id>/commands · state · events` |
 | Android app | `app/` (local), APK on Releases | Flutter. Login, saved WiFi, dashboard (live signal, Alert Mode, renameable relays), night schedule, Add Device, alarm tone/notification, background service that rings even with the app closed |
 | Installer | `tools/esp-install.sh` (local) | The one flashing tool: installs PlatformIO, registers a unit, flashes it, checks it boots. Its section 2 ("YOUR PIN LOGIC") is where the customer's pin code goes. Step-by-step guide with 8 examples: `tools/ESP-INSTALL-GUIDE.md` / `.docx` (local) |
+| Windows installer | `tools/esp-install.exe` (local) | `esp-install.bat` packed into one program (Go launcher in `tools/exe-launcher/`, built on the Mac by `tools/build-exe.sh`); same steps and options, needs Python; uses a `pin-logic.ino` placed next to it |
 | Pin-logic test | `tools/esp-test.sh` (local) | Simulates YOUR PIN LOGIC on the Mac and checks it against the default sequence, or (`--board`) prints and checks the real board's `[pins]` log |
 | Hosting / CI | `docker-compose.prod.yml`, `.github/workflows/deploy.yml` | Push to `main` → GitHub Actions → SSH → rebuild on EC2 |
 
