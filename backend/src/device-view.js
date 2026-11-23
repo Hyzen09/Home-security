@@ -50,5 +50,8 @@ export function toPublicDevice(row) {
     schedule_active: online && !!row.schedule_active,
     alarm: online && !!row.alarm_state,
     presence: online && !!row.presence,
+    // The pin logic switch as the unit last reported it (it keeps it itself); null = firmware without it.
+    pin_logic_enabled: row.pin_logic_enabled == null ? null : !!row.pin_logic_enabled,
+    pin_logic_running: online && !!row.pin_logic_running,
   };
 }

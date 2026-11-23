@@ -124,6 +124,8 @@ retrying and its alarm and custom code keep working locally) — see "What's ver
 | `PATCH /devices/:id/outputs/:output` | Bearer | `relay1` (D19) `relay2` (D21) `relay3` (D18) — 409 if offline |
 | `PATCH /devices/:id/alert-mode` | Bearer | arm / disarm — 409 if offline |
 | `POST /devices/:id/alarm/stop` | Bearer | silence, stay armed |
+| `PATCH /devices/:id/pin-logic` | Bearer | `{active}`: the unit's light sequence (pin logic) on / off — 409 if offline |
+| `POST /devices/:id/pin-logic/stop` | Bearer | end the running light sequence until the next detection — 409 if offline |
 | `GET /devices/:id/events` | Bearer | recent detections |
 | `DELETE /devices/:id` | Bearer | unclaim **and reset the unit** |
 | `GET /admin` (page) · `/admin/api/*` | `ADMIN_USER` / `ADMIN_PASSWORD` login | database admin: view, add, edit, delete rows in every table; disabled unless both are set in `.env` |
@@ -132,8 +134,9 @@ retrying and its alarm and custom code keep working locally) — see "What's ver
 
 **Unit local HTTP** (setup hotspot only, `192.168.4.1`): `GET /info`, `POST /provision {ssid, password, owner_user_id}`.
 
-**MQTT** (`devices/<id>/…`): `commands` ← `output_set`, `alert_mode_set`, `schedule_set`, `alarm_stop`, `ping`, `sync` ·
-`state` (retained) → relay1/relay2/alarm/presence/alert_mode_active/schedule_active · `events` → `sensor_trigger`, `heartbeat {rssi}`.
+**MQTT** (`devices/<id>/…`): `commands` ← `output_set`, `alert_mode_set`, `schedule_set`, `alarm_stop`, `pin_logic_set`,
+`pin_logic_stop`, `ping`, `sync` · `state` (retained) → relay1/relay2/relay3/alarm/presence/alert_mode_active/schedule_active/
+pin_logic_enabled/pin_logic_running · `events` → `sensor_trigger`, `heartbeat {rssi}`.
 
 **WebSocket** (`/ws?token=…`): `device_state`, `device_status`, `device_rssi`, `sensor_event`, `device_removed`, `hb`.
 

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import db from "../db.js";
-import { requestSync, setAlertMode, setOutput, stopAlarm } from "../mqtt.js";
+import { requestSync, setAlertMode, setOutput, setPinLogic, stopAlarm, stopPinLogic } from "../mqtt.js";
 import { LABELS, LABEL_MAX, OUTPUTS, isOnline, toPublicDevice } from "../device-view.js";
 
 const router = Router();
@@ -118,6 +118,29 @@ router.patch("/:id/alert-mode", (req, res) => {
 
   setAlertMode(device.device_id, active);
   res.json({ ok: true, requested: { active } });
+});
+
+// The pin logic switch: on = the unit runs its light sequence while someone is detected (whatever
+// Alert Mode says), off = its pins stay off. The unit saves it, so it holds without internet too.
+router.patch("/:id/pin-logic", (req, res) => {
+  const device = ownedDeviceOr404(req, res);
+  if (!device) return;
+  const { active } = req.body || {};
+  if (typeof active !== "boolean") return res.status(400).json({ error: "active (boolean) required" });
+  if (!onlineOr409(device, res)) return;
+
+  setPinLogic(device.device_id, active);
+  res.json({ ok: true, requested: { active } });
+});
+
+// Ends the running light sequence now; the next detection starts it again.
+router.post("/:id/pin-logic/stop", (req, res) => {
+  const device = ownedDeviceOr404(req, res);
+  if (!device) return;
+  if (!onlineOr409(device, res)) return;
+
+  stopPinLogic(device.device_id);
+  res.json({ ok: true });
 });
 
 // Unclaims rather than deleting the row: device_secret (the unit's

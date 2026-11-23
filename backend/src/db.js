@@ -153,6 +153,11 @@ addColumnIfMissing("devices", "relay3_state", "INTEGER NOT NULL DEFAULT 0");
 for (const column of ["relay3_name", "relay3_pin"]) addColumnIfMissing("devices", column, "TEXT");
 // Set while the owner's night alarm arms the unit (reported by the unit).
 addColumnIfMissing("devices", "schedule_active", "INTEGER NOT NULL DEFAULT 0");
+// The unit's pin logic (the light sequence on its own pins, added 2026-11-23), as the unit reports it:
+// the app's on/off switch, and whether the sequence is running now. pin_logic_enabled NULL = the unit's
+// firmware predates it (the app then shows no Pin logic controls).
+addColumnIfMissing("devices", "pin_logic_enabled", "INTEGER");
+addColumnIfMissing("devices", "pin_logic_running", "INTEGER NOT NULL DEFAULT 0");
 
 export function nextDefaultDeviceName(ownerUserId) {
   const taken = new Set(

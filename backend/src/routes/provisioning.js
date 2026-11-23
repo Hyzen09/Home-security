@@ -101,7 +101,7 @@ router.post("/reset-device", (req, res) => {
     db.prepare(
       `UPDATE devices SET status = 'unclaimed', owner_user_id = NULL, name = NULL, wifi_ssid = NULL,
          last_seen = NULL, alert_mode_active = 0, relay1_state = 0, relay2_state = 0, relay3_state = 0, alarm_state = 0,
-         presence = 0, schedule_active = 0, rssi = NULL, relay1_name = NULL, relay2_name = NULL, relay3_name = NULL,
+         presence = 0, schedule_active = 0, pin_logic_running = 0, rssi = NULL, relay1_name = NULL, relay2_name = NULL, relay3_name = NULL,
          reset_pending = 0
        WHERE device_id = ?`
     ).run(device.device_id);

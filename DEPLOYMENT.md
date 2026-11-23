@@ -150,7 +150,10 @@ use a long password, and don't open the page on a network you don't trust.
 
 Device protocol over MQTT (see `backend/src/mqtt.js`): commands `output_set` (`relay1`/`relay2`),
 `alert_mode_set`, `schedule_set` (the owner's night schedule, sent when a unit comes online, is claimed, or the owner changes it),
-`alarm_stop`, `ping`, `sync`; units publish retained `state` and `sensor_trigger`/`heartbeat` events
+`alarm_stop`, `pin_logic_set` / `pin_logic_stop` (the app's Pin logic switch and Stop loop button for the unit's own
+light sequence), `ping`, `sync`; units publish retained `state` (with `pin_logic_enabled` / `pin_logic_running` from
+firmware of 2026-11-23 on; `pin_logic_enabled` is stored as NULL for older units, and the app then hides those controls)
+and `sensor_trigger`/`heartbeat` events
 (the heartbeat carries `rssi`, saved and pushed to the app as `device_rssi` when it changes).
 
 **Online / offline.** Every 5 s the backend sends `ping` to each claimed unit, and the unit answers with a

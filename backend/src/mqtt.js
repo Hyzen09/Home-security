@@ -10,12 +10,16 @@ const BROKER_URL = process.env.MQTT_URL || "mqtt://127.0.0.1:1883";
 //   devices/{id}/commands  <- {type:"output_set", output:"relay1"|"relay2"|"relay3", state}
 //                             {type:"alert_mode_set", active}
 //                             {type:"alarm_stop"}  (silence; stays armed)
+//                             {type:"pin_logic_set", active}  (the pin logic switch: light sequence on/off)
+//                             {type:"pin_logic_stop"}  (ends a running sequence until the next detection)
 //                             {type:"ping"}  (every 5 s; the unit answers with a heartbeat event)
 //                             {type:"schedule_set", enabled, start_min, end_min, tz_offset_min}
 //                               (the owner's night alarm; sent whenever the unit comes online and on change)
 //                             {type:"sync"}  (the unit was removed in the app: it asks POST /provisioning/status and resets)
 //   devices/{id}/state     -> {relay1, relay2, relay3, alarm, presence, alert_mode_active (the alarm switch),
-//                              schedule_active (the night alarm is arming it now), uptime_ms} (retained)
+//                              schedule_active (the night alarm is arming it now), pin_logic_enabled,
+//                              pin_logic_running, uptime_ms} (retained; units flashed before 2026-11-23 send
+//                              no pin_logic_* fields)
 //   devices/{id}/events    -> {type:"sensor_trigger"} on each new presence detection,
 //                             {type:"heartbeat", rssi} (answers each ping; rssi = WiFi signal, dBm)
 
@@ -125,9 +129,11 @@ client.on("message", (topic, payloadBuf, packet) => {
   }
 
   if (topic.endsWith("/state")) {
+    // null = firmware without the pin logic switch.
+    const pinLogicEnabled = typeof msg.pin_logic_enabled === "boolean" ? msg.pin_logic_enabled : null;
     db.prepare(
       `UPDATE devices SET relay1_state = ?, relay2_state = ?, relay3_state = ?, alarm_state = ?, presence = ?, alert_mode_active = ?,
-         schedule_active = ?
+         schedule_active = ?, pin_logic_enabled = ?, pin_logic_running = ?
        WHERE device_id = ?`
     ).run(
       bit(msg.relay1),
@@ -137,6 +143,8 @@ client.on("message", (topic, payloadBuf, packet) => {
       bit(msg.presence),
       bit(msg.alert_mode_active),
       bit(msg.schedule_active),
+      pinLogicEnabled === null ? null : bit(pinLogicEnabled),
+      bit(msg.pin_logic_running),
       deviceId
     );
 
@@ -155,6 +163,8 @@ client.on("message", (topic, payloadBuf, packet) => {
         presence: !!msg.presence,
         alert_mode_active: !!msg.alert_mode_active,
         schedule_active: !!msg.schedule_active,
+        pin_logic_enabled: pinLogicEnabled,
+        pin_logic_running: !!msg.pin_logic_running,
       });
     }
   }
@@ -198,6 +208,16 @@ export function sendSchedule(deviceId, schedule) {
 
 export function stopAlarm(deviceId) {
   sendCommand(deviceId, { type: "alarm_stop" });
+}
+
+// The pin logic switch: the unit runs its light sequence on detection (on) or leaves its pins off.
+export function setPinLogic(deviceId, active) {
+  sendCommand(deviceId, { type: "pin_logic_set", active });
+}
+
+// Ends the running light sequence; the unit's next detection starts it again.
+export function stopPinLogic(deviceId) {
+  sendCommand(deviceId, { type: "pin_logic_stop" });
 }
 
 export function setOutput(deviceId, output, state) {
