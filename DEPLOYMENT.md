@@ -233,6 +233,19 @@ The app source (`app/`) isn't in this repo, but its APK is published as a releas
 Permanent link to the newest version (works as long as the asset is named `digi-guard.apk`):
 `https://github.com/Hyzen09/Home-security/releases/latest/download/digi-guard.apk`
 
+**Copy on the server.** `http://13.206.228.27:4000/app` downloads the same APK from the server itself
+(`backend/src/routes/app-download.js`), for a QR code that doesn't depend on GitHub. The file is
+`/opt/home-security/downloads/digi-guard.apk`: not in git, kept across deploys, mounted read-only in the backend. It is a
+one-time copy (app-v1.0.2, 2026-11-25) and does **not** follow new releases. To replace it, on the server (no restart needed):
+
+```bash
+cd /opt/home-security/downloads
+curl -fsSL -o new.part https://github.com/Hyzen09/Home-security/releases/latest/download/digi-guard.apk
+sha256sum new.part   # compare: gh api repos/Hyzen09/Home-security/releases/latest --jq '.assets[0].digest'
+chmod 644 new.part && mv new.part digi-guard.apk
+```
+It is plain HTTP (no TLS yet), so phones may warn about the download.
+
 Publish a new version from the maintainer's Mac (bump `version:` in `app/pubspec.yaml` first) with `tools/release-app.sh`.
 It builds the release APK **explicitly against production** (`--dart-define=BACKEND_HOST=13.206.228.27`) and refuses to bless
 the APK unless every check passes:

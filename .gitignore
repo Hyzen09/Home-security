@@ -4,6 +4,9 @@ node_modules/
 backend/data.sqlite*
 backend/.env
 
+# The Android app the server hands out at /app (copied there by hand).
+/downloads/
+
 firmware/.pio/
 firmware/.pio-venv/
 firmware/include/secrets.h

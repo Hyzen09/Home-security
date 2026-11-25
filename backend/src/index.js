@@ -12,6 +12,7 @@ import deviceRoutes from "./routes/devices.js";
 import manufacturingRoutes from "./routes/manufacturing.js";
 import provisioningRoutes from "./routes/provisioning.js";
 import adminRoutes from "./routes/admin.js";
+import appDownloadRoutes from "./routes/app-download.js";
 
 const app = express();
 app.use(cors());
@@ -30,6 +31,8 @@ app.use("/manufacturing", manufacturingRoutes);
 app.use("/provisioning", provisioningRoutes);
 // Database admin page + API, guarded by ADMIN_KEY (routes/admin.js).
 app.use("/admin", adminRoutes);
+// The Android app itself (public): what the download QR code opens.
+app.use("/app", appDownloadRoutes);
 
 const server = http.createServer(app);
 initWs(server);

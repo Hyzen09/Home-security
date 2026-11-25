@@ -27,8 +27,10 @@ services:
     environment:
       - MQTT_URL=mqtt://mosquitto:1883
       - DB_PATH=/data/data.sqlite
+      - DOWNLOADS_DIR=/downloads
     volumes:
       - backend-data:/data
+      - ./downloads:/downloads:ro
     restart: unless-stopped
     logging: *logging
     healthcheck:
